@@ -40,7 +40,7 @@ namespace QuizApplication.Controllers
             }
 
             var quiz = await _context.Quizzes
-                .Include(q => q.Owner)
+                .Include(q => q.Owner).Include(q => q.Questions).ThenInclude(qn => qn.Answers)
                 .FirstOrDefaultAsync(m => m.Id == id);
             if (quiz == null)
             {
@@ -73,7 +73,7 @@ namespace QuizApplication.Controllers
             quiz.AccessCode = await GenerateUniqueAccessCodeAsync();
             _context.Add(quiz);
             await _context.SaveChangesAsync();
-            return RedirectToAction(nameof(Index));
+            return RedirectToAction(nameof(Details), new {id = quiz.Id});
             
             
         }
@@ -140,7 +140,7 @@ namespace QuizApplication.Controllers
                 else throw;
             }
 
-            return RedirectToAction(nameof(Index));
+            return RedirectToAction(nameof(Details), new { id = quiz.Id });
         }
 
         // GET: Quizzes/Delete/5
@@ -182,6 +182,10 @@ namespace QuizApplication.Controllers
             {
                 return Forbid();
             }
+
+            var questions = _context.Questions.Where(q => q.QuizId == quiz.Id);
+            _context.Answers.RemoveRange(_context.Answers.Where(a => a.Question.QuizId == quiz.Id));
+            _context.Questions.RemoveRange(questions);
 
             _context.Quizzes.Remove(quiz);
             

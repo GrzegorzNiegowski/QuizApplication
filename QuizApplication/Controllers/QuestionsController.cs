@@ -1,15 +1,20 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using QuizApplication.Data;
 using QuizApplication.Models;
+using QuizApplication.Models.ViewModels;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Security.Claims;
+using System.Threading.Tasks;
 
 namespace QuizApplication.Controllers
 {
+    [Authorize]
     public class QuestionsController : Controller
     {
         private readonly ApplicationDbContext _context;
@@ -46,10 +51,26 @@ namespace QuizApplication.Controllers
         }
 
         // GET: Questions/Create
-        public IActionResult Create()
+        public async Task<IActionResult> Create(int quizId)
         {
-            ViewData["QuizId"] = new SelectList(_context.Quizzes, "Id", "Title");
-            return View();
+            var quiz = await _context.Quizzes.FindAsync(quizId);
+            if (quiz == null) 
+            {
+                return NotFound();
+            }
+            if(!IsOwnerOrAdmin(quiz))
+            {
+                return Forbid();
+            }
+
+            var vm = new QuestionCreateViewModel
+            {
+                QuizId = quizId,
+                TimeLimitSeconds = 30
+            };
+
+            ViewBag.QuizTitle = quiz.Title;
+            return View(vm);
         }
 
         // POST: Questions/Create
@@ -57,16 +78,73 @@ namespace QuizApplication.Controllers
         // For more details, see http://go.microsoft.com/fwlink/?LinkId=317598.
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> Create([Bind("Id,Content,TimeLimitSeconds,ImageUrl,QuizId")] Question question)
+        public async Task<IActionResult> Create(QuestionCreateViewModel model, string submit)
         {
-            if (ModelState.IsValid)
+            // model validation (DataAnnotations)
+            if (!ModelState.IsValid)
             {
-                _context.Add(question);
-                await _context.SaveChangesAsync();
-                return RedirectToAction(nameof(Index));
+                var quizCheck = await _context.Quizzes.FindAsync(model.QuizId);
+                ViewBag.QuizTitle = quizCheck?.Title ?? "";
+                return View(model);
             }
-            ViewData["QuizId"] = new SelectList(_context.Quizzes, "Id", "Title", question.QuizId);
-            return View(question);
+
+            // dodatkowa walidacja: co najmniej jedna niepusta odpowiedź
+            var nonEmptyAnsers = model.Answers.Where(a => !string.IsNullOrWhiteSpace(a.Content)).ToList();
+            if (!nonEmptyAnsers.Any())
+            {
+                ModelState.AddModelError("", "Dodaj co najmniej jedną odpowiedź");
+                var quizCheck = await _context.Quizzes.FindAsync(model.QuizId);
+                ViewBag.QuizTitle = quizCheck?.Title ?? "";
+                return View(model);
+            }
+
+            // co najmniej jedna poprawna odpowiedź spośród niepustych
+            if(!nonEmptyAnsers.Any(a => a.IsCorrect))
+            {
+                ModelState.AddModelError("", "Przynajmniej jedna z wprowadzanych odpowiedzi musi być oznaczona jako poprawna");
+                var quizCheck = await _context.Quizzes.FindAsync(model.QuizId);
+                ViewBag.QuizTitle = quizCheck?.Title ?? "";
+                return View(model);
+            }
+
+            // dodatkowe: sprawdź uprawnienia (ponownie, zabezpieczenie)
+            var quiz = await _context.Quizzes.FindAsync(model.QuizId);
+            if (quiz != null)
+            {
+                return NotFound();
+            }
+            if(!IsOwnerOrAdmin(quiz))
+            {
+                return Forbid();
+            }
+
+            var question = new Question
+            {
+                Content = model.Content,
+                TimeLimitSeconds = model.TimeLimitSeconds,
+                QuizId = model.QuizId,
+            };
+
+            foreach(var a in nonEmptyAnsers)
+            {
+                var answerEntity = new Answer
+                {
+                    Content = a.Content.Trim(),
+                    IsCorrect = a.IsCorrect
+                };
+                question.Answers.Add(answerEntity);
+            }
+
+            _context.Questions.Add(question);
+            await _context.SaveChangesAsync();
+
+            // jeśli user kliknął "Zakończ i pokaż quiz" -> redirect do Details quizu
+            if(!string.IsNullOrEmpty(submit) && submit == "finish")
+            {
+                return RedirectToAction("Details", "QuizzesController", new { id = model.QuizId });
+            }
+            return RedirectToAction(nameof(Create), new { quizId = model.QuizId });
+
         }
 
         // GET: Questions/Edit/5
@@ -160,5 +238,15 @@ namespace QuizApplication.Controllers
         {
             return _context.Questions.Any(e => e.Id == id);
         }
+
+        private bool IsOwnerOrAdmin(Quiz quiz)
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (userId == null) return false;
+            if (quiz.OwnerId == userId) return true;
+            return User.IsInRole("Admin");
+        }
+
+
     }
 }
