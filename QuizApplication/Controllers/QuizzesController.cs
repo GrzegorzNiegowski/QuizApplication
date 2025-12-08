@@ -9,17 +9,18 @@ using Microsoft.EntityFrameworkCore;
 using QuizApplication.Data;
 using QuizApplication.Models;
 using System.Security.Claims;
+using QuizApplication.Services;
 
 namespace QuizApplication.Controllers
 {
     [Authorize]
     public class QuizzesController : Controller
     {
-        private readonly ApplicationDbContext _context;
+        private readonly IQuizService _quizService;
 
-        public QuizzesController(ApplicationDbContext context)
+        public QuizzesController(IQuizService quizService)
         {
-            _context = context;
+            _quizService = quizService;
         }
 
 

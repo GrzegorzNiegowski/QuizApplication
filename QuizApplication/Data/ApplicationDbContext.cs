@@ -23,6 +23,19 @@ namespace QuizApplication.Data
                 .WithMany(u => u.Quizzes)
                 .HasForeignKey(q => q.OwnerId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            // Question -> Answers : kaskadowe usuwanie
+            builder.Entity<Question>().HasMany(q => q.Answers).WithOne(a => a.Question).HasForeignKey(a => a.QuestionId).OnDelete(DeleteBehavior.Cascade);
+
+            // Unikatowy index na AccessCode
+            builder.Entity<Quiz>()
+                .HasIndex(q => q.AccessCode)
+                .IsUnique();
+
+            // Dodatkowe limity długości (opcjonalnie)
+            builder.Entity<Answer>().Property(a => a.Content).HasMaxLength(1000);
+            builder.Entity<Question>().Property(q => q.Content).HasMaxLength(2000);
+            builder.Entity<Quiz>().Property(q => q.Title).HasMaxLength(250);
         }
 
     }
