@@ -1,49 +1,56 @@
-﻿@model QuizApplication.Models.Question
+﻿@model QuizApplication.Models.ViewModels.EditQuestionViewModel
 
 @{
-    ViewData["Title"] = "Edit";
+    ViewData["Title"] = "Edytuj pytanie";
 }
 
-<h1>Edit</h1>
+<h2>Edytuj pytanie — @ViewBag.QuizTitle</h2>
 
-<h4>Question</h4>
-<hr />
-<div class="row">
-    <div class="col-md-4">
-        <form asp-action="Edit">
-            <div asp-validation-summary="ModelOnly" class="text-danger"></div>
-            <input type="hidden" asp-for="Id" />
-            <div class="form-group">
-                <label asp-for="Content" class="control-label"></label>
-                <input asp-for="Content" class="form-control" />
-                <span asp-validation-for="Content" class="text-danger"></span>
-            </div>
-            <div class="form-group">
-                <label asp-for="TimeLimitSeconds" class="control-label"></label>
-                <input asp-for="TimeLimitSeconds" class="form-control" />
-                <span asp-validation-for="TimeLimitSeconds" class="text-danger"></span>
-            </div>
-            <div class="form-group">
-                <label asp-for="ImageUrl" class="control-label"></label>
-                <input asp-for="ImageUrl" class="form-control" />
-                <span asp-validation-for="ImageUrl" class="text-danger"></span>
-            </div>
-            <div class="form-group">
-                <label asp-for="QuizId" class="control-label"></label>
-                <select asp-for="QuizId" class="form-control" asp-items="ViewBag.QuizId"></select>
-                <span asp-validation-for="QuizId" class="text-danger"></span>
-            </div>
-            <div class="form-group">
-                <input type="submit" value="Save" class="btn btn-primary" />
-            </div>
-        </form>
+<form asp-action="Edit" method="post">
+    @Html.AntiForgeryToken()
+    <input type="hidden" asp-for="QuestionId" />
+    <input type="hidden" asp-for="QuizId" />
+
+    <div class="form-group">
+        <label asp-for="Content"></label>
+        <textarea asp-for="Content" class="form-control" rows="3"></textarea>
+        <span asp-validation-for="Content" class="text-danger"></span>
     </div>
-</div>
 
-<div>
-    <a asp-action="Index">Back to List</a>
-</div>
+    <div class="form-group">
+        <label asp-for="TimeLimitSeconds"></label>
+        <input asp-for="TimeLimitSeconds" class="form-control" />
+        <span asp-validation-for="TimeLimitSeconds" class="text-danger"></span>
+    </div>
+
+    <div class="form-group">
+        <label asp-for="Points"></label>
+        <input asp-for="Points" class="form-control" />
+        <span asp-validation-for="Points" class="text-danger"></span>
+    </div>
+
+    <hr />
+    <h4>Odpowiedzi</h4>
+    @for (int i = 0; i < Model.Answers.Count; i++)
+    {
+        <div class="mb-2">
+            <input type="hidden" asp-for="Answers[@i].Id" />
+            <input asp-for="Answers[@i].Content" class="form-control" />
+            <div class="form-check">
+                <input asp-for="Answers[@i].IsCorrect" class="form-check-input" />
+                <label class="form-check-label">Poprawna</label>
+            </div>
+        </div>
+    }
+
+    <div asp-validation-summary="ModelOnly" class="text-danger"></div>
+
+    <button type="submit" class="btn btn-primary">Zapisz</button>
+    <a asp-controller="Quizzes" asp-action="Details" asp-route-id="@Model.QuizId" class="btn btn-secondary">Anuluj</a>
+</form>
 
 @section Scripts {
-    @{await Html.RenderPartialAsync("_ValidationScriptsPartial");}
+    @{
+        await Html.RenderPartialAsync("_ValidationScriptsPartial");
+    }
 }

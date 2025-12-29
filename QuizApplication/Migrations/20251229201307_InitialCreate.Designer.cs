@@ -12,8 +12,8 @@ using QuizApplication.Data;
 namespace QuizApplication.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20251127171410_Models")]
-    partial class Models
+    [Migration("20251229201307_InitialCreate")]
+    partial class InitialCreate
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -244,7 +244,8 @@ namespace QuizApplication.Migrations
 
                     b.Property<string>("Content")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
 
                     b.Property<bool>("IsCorrect")
                         .HasColumnType("boolean");
@@ -269,10 +270,15 @@ namespace QuizApplication.Migrations
 
                     b.Property<string>("Content")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
 
                     b.Property<string>("ImageUrl")
-                        .HasColumnType("text");
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<int>("Points")
+                        .HasColumnType("integer");
 
                     b.Property<int>("QuizId")
                         .HasColumnType("integer");
@@ -297,9 +303,10 @@ namespace QuizApplication.Migrations
 
                     b.Property<string>("AccessCode")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(5)
+                        .HasColumnType("character varying(5)");
 
-                    b.Property<DateTime>("CreatedAt")
+                    b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("OwnerId")
@@ -307,9 +314,13 @@ namespace QuizApplication.Migrations
 
                     b.Property<string>("Title")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(250)
+                        .HasColumnType("character varying(250)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AccessCode")
+                        .IsUnique();
 
                     b.HasIndex("OwnerId");
 

@@ -6,6 +6,8 @@ using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using QuizApplication.Data;
 using QuizApplication.Models;
 using QuizApplication.Models.ViewModels;
+using QuizApplication.Services;
+using QuizApplication.Utilities;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -17,236 +19,164 @@ namespace QuizApplication.Controllers
     [Authorize]
     public class QuestionsController : Controller
     {
-        private readonly ApplicationDbContext _context;
+        private readonly IQuestionService _questionService;
+        private readonly IQuizService _quizService;
 
-        public QuestionsController(ApplicationDbContext context)
+        public QuestionsController(IQuestionService questionService, IQuizService quizService)
         {
-            _context = context;
+            _questionService = questionService;
+            _quizService = quizService;
         }
 
-        // GET: Questions
+        // GET: Questions (Lista pytań dla danego quizu)
         public async Task<IActionResult> Index()
         {
-            var applicationDbContext = _context.Questions.Include(q => q.Quiz);
-            return View(await applicationDbContext.ToListAsync());
+            // odczyt quizId z query string
+            var qs = Request.Query["quizId"].FirstOrDefault();
+            if (!int.TryParse(qs, out var quizId) || quizId <= 0)
+            {
+                return BadRequest("Brakuje prawidłowego parametru quizId w query string (np. /Questions?quizId=123).");
+            }
+
+            var quizResult = await _quizService.GetQuizWithDetailsAsync(quizId);
+            if (!quizResult.Success || quizResult.Data == null)
+            {
+                return NotFound();
+            }
+
+            // zwracamy widok z listą pytań (możesz też zwrócić quizResult.Data jeśli chcesz tytuł + pytania)
+            var questions = quizResult.Data.Questions.OrderBy(q => q.Id).ToList();
+            return View(questions);
         }
 
         // GET: Questions/Details/5
-        public async Task<IActionResult> Details(int? id)
+        public async Task<IActionResult> Details(int id)
         {
-            if (id == null)
-            {
-                return NotFound();
-            }
+            var result = await _quizService.GetQuizWithDetailsAsync(id);
+            if (!result.Success) return NotFound();
 
-            var question = await _context.Questions
-                .Include(q => q.Quiz)
-                .FirstOrDefaultAsync(m => m.Id == id);
-            if (question == null)
-            {
-                return NotFound();
-            }
-
-            return View(question);
+            return View(result.Data);
         }
 
-        // GET: Questions/Create
+        // GET: Questions/Create?quizId=5
         public async Task<IActionResult> Create(int quizId)
         {
-            var quiz = await _context.Quizzes.FindAsync(quizId);
-            if (quiz == null) 
-            {
-                return NotFound();
-            }
-            if(!IsOwnerOrAdmin(quiz))
-            {
+            var quizResult = await _quiz_service_getbyid(quizId);
+            if (!quizResult.Success) return NotFound();
+
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            if (!await _quizService.IsOwnerOrAdminAsync(quizId, userId, User.IsInRole("Admin")))
                 return Forbid();
-            }
 
-            var vm = new QuestionCreateViewModel
-            {
-                QuizId = quizId,
-                TimeLimitSeconds = 30
-            };
-
-            ViewBag.QuizTitle = quiz.Title;
+            ViewBag.QuizTitle = quizResult.Data!.Title;
+            var vm = new AddQuestionViewModel { QuizId = quizId };
             return View(vm);
         }
 
-        // POST: Questions/Create
-        // To protect from overposting attacks, enable the specific properties you want to bind to.
-        // For more details, see http://go.microsoft.com/fwlink/?LinkId=317598.
+        // POST Create — (niezmienione)
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> Create(QuestionCreateViewModel model, string submit)
+        public async Task<IActionResult> Create(AddQuestionViewModel vm, string? submit)
         {
-            // model validation (DataAnnotations)
             if (!ModelState.IsValid)
             {
-                var quizCheck = await _context.Quizzes.FindAsync(model.QuizId);
-                ViewBag.QuizTitle = quizCheck?.Title ?? "";
-                return View(model);
+                var q = await _quiz_service_getbyid(vm.QuizId);
+                ViewBag.QuizTitle = q.Data?.Title ?? "";
+                return View(vm);
             }
 
-            // dodatkowa walidacja: co najmniej jedna niepusta odpowiedź
-            var nonEmptyAnsers = model.Answers.Where(a => !string.IsNullOrWhiteSpace(a.Content)).ToList();
-            if (!nonEmptyAnsers.Any())
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var result = await _questionService.AddQuestionAsync(vm, userId, User.IsInRole("Admin"));
+            if (!result.Success)
             {
-                ModelState.AddModelError("", "Dodaj co najmniej jedną odpowiedź");
-                var quizCheck = await _context.Quizzes.FindAsync(model.QuizId);
-                ViewBag.QuizTitle = quizCheck?.Title ?? "";
-                return View(model);
+                foreach (var e in result.Errors) ModelState.AddModelError("", e);
+                var q = await _quiz_service_getbyid(vm.QuizId);
+                ViewBag.QuizTitle = q.Data?.Title ?? "";
+                return View(vm);
             }
 
-            // co najmniej jedna poprawna odpowiedź spośród niepustych
-            if(!nonEmptyAnsers.Any(a => a.IsCorrect))
-            {
-                ModelState.AddModelError("", "Przynajmniej jedna z wprowadzanych odpowiedzi musi być oznaczona jako poprawna");
-                var quizCheck = await _context.Quizzes.FindAsync(model.QuizId);
-                ViewBag.QuizTitle = quizCheck?.Title ?? "";
-                return View(model);
-            }
-
-            // dodatkowe: sprawdź uprawnienia (ponownie, zabezpieczenie)
-            var quiz = await _context.Quizzes.FindAsync(model.QuizId);
-            if (quiz != null)
-            {
-                return NotFound();
-            }
-            if(!IsOwnerOrAdmin(quiz))
-            {
-                return Forbid();
-            }
-
-            var question = new Question
-            {
-                Content = model.Content,
-                TimeLimitSeconds = model.TimeLimitSeconds,
-                QuizId = model.QuizId,
-            };
-
-            foreach(var a in nonEmptyAnsers)
-            {
-                var answerEntity = new Answer
-                {
-                    Content = a.Content.Trim(),
-                    IsCorrect = a.IsCorrect
-                };
-                question.Answers.Add(answerEntity);
-            }
-
-            _context.Questions.Add(question);
-            await _context.SaveChangesAsync();
-
-            // jeśli user kliknął "Zakończ i pokaż quiz" -> redirect do Details quizu
-            if(!string.IsNullOrEmpty(submit) && submit == "finish")
-            {
-                return RedirectToAction("Details", "QuizzesController", new { id = model.QuizId });
-            }
-            return RedirectToAction(nameof(Create), new { quizId = model.QuizId });
-
+            TempData["Success"] = "Pytanie zapisane.";
+            if (submit == "finish") return RedirectToAction("Details", "Quizzes", new { id = vm.QuizId });
+            return RedirectToAction(nameof(Create), new { quizId = vm.QuizId });
         }
 
-        // GET: Questions/Edit/5
-        public async Task<IActionResult> Edit(int? id)
+        // GET Edit
+        public async Task<IActionResult> Edit(int id)
         {
-            if (id == null)
-            {
-                return NotFound();
-            }
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var getResult = await _questionService.GetQuestionForEditAsync(id, userId, User.IsInRole("Admin"));
+            if (!getResult.Success) return NotFound(); // lub Forbid jeśli komunikat z serwisu to brak uprawnień
 
-            var question = await _context.Questions.FindAsync(id);
-            if (question == null)
-            {
-                return NotFound();
-            }
-            ViewData["QuizId"] = new SelectList(_context.Quizzes, "Id", "Title", question.QuizId);
-            return View(question);
+            var vm = getResult.Data!;
+            var quiz = await _quiz_service_getbyid(vm.QuizId);
+            ViewBag.QuizTitle = quiz.Data?.Title ?? "";
+            return View(vm);
         }
 
-        // POST: Questions/Edit/5
-        // To protect from overposting attacks, enable the specific properties you want to bind to.
-        // For more details, see http://go.microsoft.com/fwlink/?LinkId=317598.
+        // POST Edit
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> Edit(int id, [Bind("Id,Content,TimeLimitSeconds,ImageUrl,QuizId")] Question question)
+        public async Task<IActionResult> Edit(EditQuestionViewModel vm)
         {
-            if (id != question.Id)
+            if (!ModelState.IsValid)
             {
-                return NotFound();
+                var quiz = await _quiz_service_getbyid(vm.QuizId);
+                ViewBag.QuizTitle = quiz.Data?.Title ?? "";
+                return View(vm);
             }
 
-            if (ModelState.IsValid)
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var res = await _questionService.EditQuestionAsync(vm, userId, User.IsInRole("Admin"));
+            if (!res.Success)
             {
-                try
-                {
-                    _context.Update(question);
-                    await _context.SaveChangesAsync();
-                }
-                catch (DbUpdateConcurrencyException)
-                {
-                    if (!QuestionExists(question.Id))
-                    {
-                        return NotFound();
-                    }
-                    else
-                    {
-                        throw;
-                    }
-                }
-                return RedirectToAction(nameof(Index));
+                foreach (var e in res.Errors) ModelState.AddModelError("", e);
+                var quiz = await _quiz_service_getbyid(vm.QuizId);
+                ViewBag.QuizTitle = quiz.Data?.Title ?? "";
+                return View(vm);
             }
-            ViewData["QuizId"] = new SelectList(_context.Quizzes, "Id", "Title", question.QuizId);
-            return View(question);
+
+            return RedirectToAction("Details", "Quizzes", new { id = vm.QuizId });
         }
 
-        // GET: Questions/Delete/5
-        public async Task<IActionResult> Delete(int? id)
+        // GET Delete (confirm)
+        public async Task<IActionResult> Delete(int id)
         {
-            if (id == null)
-            {
-                return NotFound();
-            }
+            // pobierz question by pokazać podsumowanie (tu używamy GetQuestionForEditAsync do wygody)
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var getResult = await _questionService.GetQuestionForEditAsync(id, userId, User.IsInRole("Admin"));
+            if (!getResult.Success) return NotFound();
 
-            var question = await _context.Questions
-                .Include(q => q.Quiz)
-                .FirstOrDefaultAsync(m => m.Id == id);
-            if (question == null)
-            {
-                return NotFound();
-            }
-
-            return View(question);
+            var vm = getResult.Data!;
+            var quiz = await _quiz_service_getbyid(vm.QuizId);
+            ViewBag.QuizTitle = quiz.Data?.Title ?? "";
+            return View(vm);
         }
 
-        // POST: Questions/Delete/5
+        // POST Delete
         [HttpPost, ActionName("Delete")]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> DeleteConfirmed(int id)
+        public async Task<IActionResult> DeleteConfirmed(int questionId)
         {
-            var question = await _context.Questions.FindAsync(id);
-            if (question != null)
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var res = await _questionService.DeleteQuestionAsync(questionId, userId, User.IsInRole("Admin"));
+            if (!res.Success)
             {
-                _context.Questions.Remove(question);
+                // nie powinniśmy ujawniać zbyt wiele — przekieruj z błędem
+                TempData["Error"] = string.Join("; ", res.Errors);
+                return RedirectToAction("Index", "Quizzes");
             }
 
-            await _context.SaveChangesAsync();
-            return RedirectToAction(nameof(Index));
+            // po usunięciu przekieruj do Details quizu - znajdź quizId (można przechować w TempData ale prostsze: niech Delete view ma hidden QuizId i wyśle je)
+            // tutaj zakładamy, że w Delete formie przesyłasz pola: questionId i quizId -> ale w tym kontrolerze mamy tylko questionId.
+            // prostsze: po usunięciu wróć do Index quizów
+            return RedirectToAction("Index", "Quizzes");
         }
 
-        private bool QuestionExists(int id)
+        // helper: mała metoda by pobrać quiz
+        private async Task<OperationResult<Quiz>> _quiz_service_getbyid(int quizId)
         {
-            return _context.Questions.Any(e => e.Id == id);
+            return await _quizService.GetByIdAsync(quizId);
         }
-
-        private bool IsOwnerOrAdmin(Quiz quiz)
-        {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (userId == null) return false;
-            if (quiz.OwnerId == userId) return true;
-            return User.IsInRole("Admin");
-        }
-
 
     }
 }

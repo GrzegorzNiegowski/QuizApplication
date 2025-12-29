@@ -11,6 +11,13 @@ namespace QuizApplication.Services
         Task<OperationResult> UpdateTitleAsync(int quizId, string newTitle, string userId, bool isAdmin);
         Task<OperationResult> DeleteQuizAsync(int quizId, string userId, bool isAdmin);
         Task<bool> IsOwnerOrAdminAsync(int quizId, string userId, bool isAdmin);
+        Task<OperationResult<Quiz>> GetByIdAsync(int id);
+
+
+        //
+        Task<OperationResult<List<Quiz>>> GetQuizzesForUserAsync(string userId);
+
+
 
     }
 }

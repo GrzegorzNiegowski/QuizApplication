@@ -8,10 +8,26 @@ namespace QuizApplication.Services
     public class QuizService : IQuizService
     {
         private readonly ApplicationDbContext _context;
+        private static readonly Random _rnd = new();
 
         public QuizService(ApplicationDbContext context)
         {
             _context = context;
+        }
+
+
+        public async Task<OperationResult<List<Quiz>>> GetQuizzesForUserAsync(string userId)
+        {
+            if (string.IsNullOrWhiteSpace(userId))
+                return OperationResult<List<Quiz>>.Fail("Brak identyfikatora użytkownika.");
+
+            var quizzes = await _context.Quizzes
+                .AsNoTracking()
+                .Where(q => q.OwnerId == userId)
+                //.Include(q => q.Questions) // opcjonalnie, usuń jeśli nie chcesz pytań w Indexie
+                .ToListAsync();
+
+            return OperationResult<List<Quiz>>.Ok(quizzes);
         }
 
         public async Task<OperationResult<Quiz>> CreateQuizAsync(CreateQuizViewModel vm, string ownerId)
@@ -60,6 +76,13 @@ namespace QuizApplication.Services
 
             if (quiz == null) return OperationResult<Quiz>.Fail("Quiz nie istnieje");
             return OperationResult<Quiz>.Ok(quiz);
+        }
+
+        public async Task<OperationResult<Quiz>> GetByIdAsync(int id)
+        {
+            var q = await _context.Quizzes.FindAsync(id);
+            if (q == null) return OperationResult<Quiz>.Fail("Quiz nie istnieje.");
+            return OperationResult<Quiz>.Ok(q);
         }
 
         public async Task<bool> IsOwnerOrAdminAsync(int quizId, string userId, bool isAdmin)
