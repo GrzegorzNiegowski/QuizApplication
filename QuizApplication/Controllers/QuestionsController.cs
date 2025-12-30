@@ -158,18 +158,29 @@ namespace QuizApplication.Controllers
         public async Task<IActionResult> DeleteConfirmed(int questionId)
         {
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            var res = await _questionService.DeleteQuestionAsync(questionId, userId, User.IsInRole("Admin"));
-            if (!res.Success)
+
+            // 1. Najpierw pobierz pytanie, żeby znać ID Quizu (potrzebne do powrotu)
+            var questionResult = await _questionService.GetQuestionForEditAsync(questionId, userId, User.IsInRole("Admin"));
+
+            if (!questionResult.Success)
             {
-                // nie powinniśmy ujawniać zbyt wiele — przekieruj z błędem
-                TempData["Error"] = string.Join("; ", res.Errors);
                 return RedirectToAction("Index", "Quizzes");
             }
 
-            // po usunięciu przekieruj do Details quizu - znajdź quizId (można przechować w TempData ale prostsze: niech Delete view ma hidden QuizId i wyśle je)
-            // tutaj zakładamy, że w Delete formie przesyłasz pola: questionId i quizId -> ale w tym kontrolerze mamy tylko questionId.
-            // prostsze: po usunięciu wróć do Index quizów
-            return RedirectToAction("Index", "Quizzes");
+            int quizId = questionResult.Data.QuizId; // Zapamiętujemy ID Quizu
+
+            // 2. Usuń pytanie
+            var res = await _questionService.DeleteQuestionAsync(questionId, userId, User.IsInRole("Admin"));
+
+            if (!res.Success)
+            {
+                TempData["Error"] = string.Join("; ", res.Errors);
+                // Jeśli błąd, wróć do szczegółów quizu (zamiast listy wszystkich)
+                return RedirectToAction("Details", "Quizzes", new { id = quizId });
+            }
+
+            // 3. Sukces: Wróć do widoku edycji/szczegółów Quizu
+            return RedirectToAction("Details", "Quizzes", new { id = quizId });
         }
 
         // helper: mała metoda by pobrać quiz

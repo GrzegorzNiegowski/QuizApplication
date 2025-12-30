@@ -8,7 +8,6 @@ namespace QuizApplication.Services
     public class QuizService : IQuizService
     {
         private readonly ApplicationDbContext _context;
-        private static readonly Random _rnd = new();
 
         public QuizService(ApplicationDbContext context)
         {
@@ -120,8 +119,9 @@ namespace QuizApplication.Services
         private static string GenerateRandomCode(int length) 
         {
             const string chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-            var rnd = new Random();
-            return new string(Enumerable.Range(0,length).Select(_ => chars[rnd.Next(chars.Length)]).ToArray());
+            
+            return new string(Enumerable.Repeat(chars, length)
+        .Select(s => s[Random.Shared.Next(s.Length)]).ToArray());
         }
 
 
