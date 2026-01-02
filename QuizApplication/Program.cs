@@ -20,6 +20,7 @@ builder.Services.AddControllersWithViews();
 builder.Services.AddScoped<IQuizService, QuizService>();
 builder.Services.AddScoped<IQuestionService, QuestionService>();
 
+builder.Services.AddSingleton<GameSessionService>();
 builder.Services.AddSignalR();
 
 var app = builder.Build();
@@ -48,7 +49,7 @@ app.MapControllerRoute(
     pattern: "{controller=Home}/{action=Index}/{id?}");
 app.MapRazorPages();
 
-app.MapHub<QuizHub>("quizHub");
+app.MapHub<QuizHub>("/quizHub");
 
 
 app.Run();

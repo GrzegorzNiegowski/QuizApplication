@@ -1,0 +1,38 @@
+﻿@*
+    For more information on enabling MVC for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
+*@
+
+@{
+    ViewData["Title"] = "Dołącz do gry";
+}
+
+<div class="text-center mt-5">
+    <h2>Dołącz do Quizu</h2>
+    <div class="row justify-content-center">
+        <div class="col-md-4">
+            <form id="joinForm">
+                <div class="form-group mb-3">
+                    <input type="text" id="accessCode" class="form-control" placeholder="Kod dostępu (np. ABC12)" required />
+                </div>
+                <div class="form-group mb-3">
+                    <input type="text" id="nickname" class="form-control" placeholder="Twój nick" required />
+                </div>
+                <button type="submit" class="btn btn-primary w-100">DOŁĄCZ</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+</<script>
+    document.getElementById("joinForm").addEventListener("submit", function(e){
+        e.preventDefault();
+        var code = document.getElementById("accesCode").value;
+        var nick = document.getElementById("nickName").value;
+          // Przekierowanie do Lobby z parametrami
+        window.location.href = '/Game/Lobby?code=${code}$nick=${nick}';
+    });
+</script>
+
+
+@{
+}
