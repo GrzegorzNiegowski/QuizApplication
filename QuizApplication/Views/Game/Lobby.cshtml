@@ -5,8 +5,7 @@
 @{
     ViewData["Title"] = "Poczekalnia";
 }
-
-<script src="~/lib/microsoft/signalr/dist/browser/signalr.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
 
 <div class="text-center">
     <h1 class="display-4">Kod gry: <span class="text-primary">@ViewBag.Code</span></h1>
@@ -19,31 +18,50 @@
 </div>
 
 <script>
-    const connection = new signalR.HubConnectionBuilder().withUrl("/quizHub").build();
+    // Używamy CDN dla pewności
+    const connection = new signalR.HubConnectionBuilder()
+        .withUrl("/QuizHub")
+        .withAutomaticReconnect()
+        .build();
 
     // Odbieranie listy graczy z serwera
-    connection.on("UpdatePlayerList", function(players){
+    connection.on("UpdatePlayerList", function (players) {
         var list = document.getElementById("playersList");
-        list.innerHTML = "";
+        list.innerHTML = ""; // Wyczyść listę
         players.forEach(function (player) {
-            var li =document.createElement("li");
+            var li = document.createElement("li");
             li.className = "list-group-item";
             li.textContent = player;
-            list.appendChild(li;
+            list.appendChild(li);
         });
     });
 
+    //HOST rozłączył się
+    connection.on("HostDiconnected", function()
+    {
+        alert("Host zakończył grę");
+        window.location.href("/Home/Index");
+    });
+
+    // 3. Obsługa błędów (np. zajęty nick)
+    connection.on("ShowError", function (message) {
+        alert(message);
+        window.history.back(); // Wróć do formularza wpisywania nicku
+    });
+
+    // Start połączenia
     connection.start().then(function () {
-        console.log("Połączono z SignalIR");
+        console.log("Połączono z SignalIR!");
 
         // Po połączeniu, wywołaj metodę "JoinGame" na serwerze
         var code = "@ViewBag.Code";
         var nick = "@ViewBag.Nick";
 
-        connecion.invoke("JoinGame", code, nick).catch(function (err) {
+        connection.invoke("JoinGamePlayer", code, nick).catch(function (err) {
             return console.error(err.toString());
         });
-    }).catch(function(err){
+
+    }).catch(function (err) {
         return console.error(err.toString());
     });
 </script>

@@ -1,69 +1,108 @@
 ﻿using QuizApplication.Models;
+using QuizApplication.Utilities;
 using System.Collections.Concurrent;
 
 namespace QuizApplication.Services
 {
-    public class GameSessionService
+    public class GameSessionService : IGameSessionService
     {
-        // Klucz: AccessCode (kod quizu), Wartość: Lista graczy
-        // Używamy ConcurrentDictionary dla bezpieczeństwa wątków (wielu graczy wbija naraz)
-        private readonly ConcurrentDictionary<string, List<Player>> _sessions = new();
+        // Klucz: AccessCode (np. "ABC12") -> Wartość: Dane sesji
+        private readonly ConcurrentDictionary<string, GameSession> _sessions = new();
 
-
-        public void AddPlayer(string accesCode, string connectionId, string nickname)
+        public void InitializeSession(string accessCode, int quizId)
         {
-            // Jeśli nie ma takiej sesji, utwórz ją (Host mógł ją utworzyć wcześniej, ale to zabezpieczenie)
-            if (!_sessions.ContainsKey(accesCode))
+            // Tworzymy pustą sesję. Host przypisze swoje ConnectionId dopiero jak połączy się przez SignalR
+            var session = new GameSession
             {
-                _sessions.TryAdd(accesCode, new List<Player>());
+                QuizId = quizId,
+                Players = new List<Player>()
+            };
+
+            // TryAdd - jeśli sesja o takim kodzie już istnieje (np. wisząca), to jej nie nadpisze (można dodać logikę czyszczenia)
+            _sessions.TryAdd(accessCode.ToUpper(), session);
+        }
+
+        public bool SessionExists(string accessCode)
+        {
+            return _sessions.ContainsKey(accessCode.ToUpper());
+        }
+
+        public void SetHostConnectionId(string accessCode, string connectionId)
+        {
+            if (_sessions.TryGetValue(accessCode.ToUpper(), out var session))
+            {
+                session.HostConnectionId = connectionId;
+            }
+        }
+
+        public bool AddPlayer(string accessCode, string connectionId, string nickname)
+        {
+            if (!_sessions.TryGetValue(accessCode.ToUpper(), out var session))
+            {
+                return false; // Sesja nie istnieje
             }
 
-            var players = _sessions[accesCode];
-
-            // Sprawdź czy taki nick już nie istnieje w tej sesji 
-            if (!players.Any(p => p.ConnectionId == connectionId))
+            lock (session.Players) // Blokada dla bezpieczeństwa listy przy wielu wątkach
             {
-                players.Add(new Player { ConnectionId = connectionId, Nickname = nickname });
+                if (session.Players.Any(p => p.Nickname.Equals(nickname, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return false; // Nick zajęty
+                }
+
+                session.Players.Add(new Player
+                {
+                    ConnectionId = connectionId,
+                    Nickname = nickname
+                });
             }
+            return true;
         }
 
         public void RemovePlayer(string connectionId)
         {
-            // Szukamy gracza we wszystkich sesjach i go usuwamy (np. przy rozłączeniu)
             foreach (var key in _sessions.Keys)
             {
-                var player = _sessions[key].FirstOrDefault(p => p.ConnectionId == connectionId);
-                if (player != null)
+                if (_sessions.TryGetValue(key, out var session))
                 {
+                    lock (session.Players)
                     {
-                        _sessions[key].Remove(player);
-                        // Jeśli pokój jest pusty, można go usunąć, ale to zależy od logiki biznesowej
+                        var player = session.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+                        if (player != null)
+                        {
+                            session.Players.Remove(player);
+                            // Jeśli pokój jest pusty i nie ma hosta, można usunąć sesję (opcjonalne)
+                            return;
+                        }
+
+                        // Jeśli to Host się rozłączył
+                        if (session.HostConnectionId == connectionId)
+                        {
+                            session.HostConnectionId = string.Empty;
+                            // Tu można dodać logikę zamykania gry, jeśli Host wyjdzie
+                        }
                     }
-
                 }
-
-
             }
-
         }
 
-
-
-        public List<string> GetPlayersInSession(string accesCode)
+        public List<string> GetPlayersInSession(string accessCode)
         {
-            if(_sessions.TryGetValue(accesCode, out var players))
+            if (_sessions.TryGetValue(accessCode.ToUpper(), out var session))
             {
-                return players.Select(p => p.Nickname).ToList();
+                lock (session.Players)
+                {
+                    return session.Players.Select(p => p.Nickname).ToList();
+                }
             }
             return new List<string>();
         }
 
-        // Helper: Znajdź kod sesji po ConnectionId (przydatne przy rozłączaniu)
         public string? GetSessionIdByConnectionId(string connectionId)
         {
-            foreach(var entry in _sessions)
+            foreach (var entry in _sessions)
             {
-                if(entry.Value.Any(p =>p.ConnectionId == connectionId))
+                if (entry.Value.HostConnectionId == connectionId ||
+                    entry.Value.Players.Any(p => p.ConnectionId == connectionId))
                 {
                     return entry.Key;
                 }
@@ -71,5 +110,13 @@ namespace QuizApplication.Services
             return null;
         }
 
+        public bool IsHost(string connectionId)
+        {
+            foreach (var entry in _sessions.Values)
+            {
+                if (entry.HostConnectionId == connectionId) return true;
+            }
+            return false;
+        }
     }
 }

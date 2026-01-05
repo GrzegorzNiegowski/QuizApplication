@@ -23,13 +23,13 @@
     </div>
 </div>
 
-</<script>
-    document.getElementById("joinForm").addEventListener("submit", function(e){
+<script>
+    document.getElementById("joinForm").addEventListener("submit", function(e) {
         e.preventDefault();
-        var code = document.getElementById("accesCode").value;
-        var nick = document.getElementById("nickName").value;
-          // Przekierowanie do Lobby z parametrami
-        window.location.href = '/Game/Lobby?code=${code}$nick=${nick}';
+        var code = document.getElementById("accessCode").value;
+        var nick = document.getElementById("nickname").value;
+        // Przekierowanie do Lobby z parametrami
+        window.location.href = `/Game/Lobby?code=${code}&nick=${nick}`;
     });
 </script>
 

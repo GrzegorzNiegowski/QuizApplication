@@ -1,0 +1,104 @@
+﻿@*
+    For more information on enabling MVC for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
+*@
+
+@{
+    ViewData["Title"] = "Panel Hosta";
+}
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
+
+<div class="container text-center mt-5">
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <h2 class="text-muted">Kod dołączenia do gry:</h2>
+            <h1 class="display-1 fw-bold text-primary tracking-widest" style="letter-spacing: 5px;">
+                @ViewBag.Code
+            </h1>
+            <p class="mb-4">Poproś graczy, aby weszli w zakładkę "Dołącz" i wpisali ten kod.</p>
+
+            <hr />
+
+            <h4 class="mb-3">Dołączyli gracze (<span id="playerCount">0</span>):</h4>
+
+            <div class="d-flex justify-content-center flex-wrap gap-2" id="playersList">
+                <span class="text-muted fst-italic" id="waitingMsg">Oczekiwanie na graczy...</span>
+            </div>
+
+            <hr class="mt-4" />
+
+            <button id="startGameBtn" class="btn btn-success btn-lg px-5" disabled>
+                ROZPOCZNIJ GRĘ
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const connection = new signalR.HubConnectionBuilder().withUrl("/quizHub").withAutomaticReconnect().build();
+
+    // 1. Odbieranie listy graczy
+    connection.on("UpdatePlayerList", function (players)
+    {
+        const list = document.getElementById("playerList");
+        const countSpan = document.getElementById("playerCount");
+        const btn = document.getElementById("startGameButton");
+        const msg = document.getElementById("waitingMsg");
+
+        // Aktualizuj licznik
+        countSpan.innerText = players.length;
+
+        //wyczyść liste
+        list.innerText = "";
+
+        if(players.length == 0)
+        {
+            if(msg)
+            {
+                list.appendChild(msg);
+            }
+            btn.disabled = true;
+        }else
+        {
+            btn.disabled = false;
+            //generuj kafelki z nickami
+            players.forEach(nick => 
+            {
+                const badge = document.createElement("span");
+                badge.className = "badge bg-info text-dark fs-5 m-1";
+                badge.innerText = nick;
+                list.appendChild(badge);
+            });
+        }
+
+     });
+
+         // 2. Obsługa błędów z serwera
+         connection.on("ShowError", function (message)
+         {
+             alert("Błąd: " + message);
+                 window.location.href = "/Quizzes/Index"; // Wróć do listy quizów w razie błędu
+         });
+
+         // 3. Połączenie jako HOST
+         connection.start().then(function() 
+         {
+             console.log("Połączono jako Host.");
+             const code = "@ViewBag.Code";
+
+             // Wywołujemy metodę JoinGameHost na serwerze
+             connection.invoke("JoinGameHost", code).catch(err => console.error(err));
+         }).catch(function (err)
+         {
+             console.log("Błąd połączenia: " , err);
+         });
+
+         // 4. Kliknięcie Start (logika później)
+         document.getElementById("startGameBtn").addEventListener("click", function() {
+         alert("Tu nastąpi przejście do pierwszego pytania! (To zrobimy w następnym kroku)");
+         // connection.invoke("StartGame", "@ViewBag.Code");
+        });
+
+</script>
+@{
+}

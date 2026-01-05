@@ -20,7 +20,7 @@ builder.Services.AddControllersWithViews();
 builder.Services.AddScoped<IQuizService, QuizService>();
 builder.Services.AddScoped<IQuestionService, QuestionService>();
 
-builder.Services.AddSingleton<GameSessionService>();
+builder.Services.AddSingleton<IGameSessionService, GameSessionService>();
 builder.Services.AddSignalR();
 
 var app = builder.Build();
