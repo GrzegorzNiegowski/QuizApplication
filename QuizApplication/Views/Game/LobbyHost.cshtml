@@ -35,70 +35,57 @@
 </div>
 
 <script>
-    const connection = new signalR.HubConnectionBuilder().withUrl("/quizHub").withAutomaticReconnect().build();
+    const connection = new signalR.HubConnectionBuilder()
+        .withUrl("/quizHub")
+        .withAutomaticReconnect()
+        .build();
 
     // 1. Odbieranie listy graczy
-    connection.on("UpdatePlayerList", function (players)
-    {
-        const list = document.getElementById("playerList");
+    connection.on("UpdatePlayerList", function (players) {
+        console.log("Otrzymano listę graczy", players);
+        const list = document.getElementById("playersList");
         const countSpan = document.getElementById("playerCount");
-        const btn = document.getElementById("startGameButton");
+        // 1. WYCZYŚĆ LISTĘ (To naprawia błędy dublowania/mieszania)
+        list.innerHTML = "";
+        const btn = document.getElementById("startGameBtn");
         const msg = document.getElementById("waitingMsg");
 
-        // Aktualizuj licznik
-        countSpan.innerText = players.length;
-
-        //wyczyść liste
-        list.innerText = "";
-
-        if(players.length == 0)
-        {
-            if(msg)
-            {
-                list.appendChild(msg);
-            }
-            btn.disabled = true;
-        }else
-        {
-            btn.disabled = false;
-            //generuj kafelki z nickami
-            players.forEach(nick => 
-            {
-                const badge = document.createElement("span");
-                badge.className = "badge bg-info text-dark fs-5 m-1";
-                badge.innerText = nick;
-                list.appendChild(badge);
-            });
-        }
-
-     });
-
-         // 2. Obsługa błędów z serwera
-         connection.on("ShowError", function (message)
-         {
-             alert("Błąd: " + message);
-                 window.location.href = "/Quizzes/Index"; // Wróć do listy quizów w razie błędu
-         });
-
-         // 3. Połączenie jako HOST
-         connection.start().then(function() 
-         {
-             console.log("Połączono jako Host.");
-             const code = "@ViewBag.Code";
-
-             // Wywołujemy metodę JoinGameHost na serwerze
-             connection.invoke("JoinGameHost", code).catch(err => console.error(err));
-         }).catch(function (err)
-         {
-             console.log("Błąd połączenia: " , err);
-         });
-
-         // 4. Kliknięcie Start (logika później)
-         document.getElementById("startGameBtn").addEventListener("click", function() {
-         alert("Tu nastąpi przejście do pierwszego pytania! (To zrobimy w następnym kroku)");
-         // connection.invoke("StartGame", "@ViewBag.Code");
+        players.forEach(function (name) {
+            const li = document.createElement("li");
+            li.textContent = name;
+            li.className = "list-group-item"; // Styl Bootstrapa
+            list.appendChild(li);
         });
 
+        // 3. Zaktualizuj licznik
+        if (countSpan) {
+            countSpan.textContent = players.length;
+        }
+    });
+
+    // 2. Obsługa błędów z serwera
+    connection.on("ShowError", function (message) {
+        alert("Błąd: " + message);
+        window.location.href = "/Quizzes/Index"; // Wróć do listy quizów w razie błędu
+    });
+
+    // 3. Połączenie jako HOST
+    connection.start().then(function () {
+        console.log("Połączono jako HOST.");
+        const code = "@ViewBag.Code";
+
+        // Wywołujemy metodę JoinGameHost na serwerze
+        connection.invoke("JoinGameHost", code).catch(err => console.error(err));
+
+    }).catch(function (err) {
+        console.error("Błąd połączenia: ", err);
+    });
+
+    // 4. Kliknięcie Start (logika później)
+    document.getElementById("startGameBtn").addEventListener("click", function() {
+        alert("Tu nastąpi przejście do pierwszego pytania! (To zrobimy w następnym kroku)");
+        // connection.invoke("StartGame", "@ViewBag.Code");
+    });
 </script>
 @{
 }

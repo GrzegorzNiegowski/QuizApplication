@@ -11,11 +11,18 @@ namespace QuizApplication.Services
 
         public void InitializeSession(string accessCode, int quizId)
         {
+
+            // Jeśli sesja już istnieje (np. po odświeżeniu), nie twórz nowej, zachowaj stan
+            if(_sessions.ContainsKey(accessCode.ToUpper()))
+            {
+                return;
+            }
             // Tworzymy pustą sesję. Host przypisze swoje ConnectionId dopiero jak połączy się przez SignalR
             var session = new GameSession
             {
                 QuizId = quizId,
-                Players = new List<Player>()
+                Players = new List<Player>(),
+                HostConnectionId = ""
             };
 
             // TryAdd - jeśli sesja o takim kodzie już istnieje (np. wisząca), to jej nie nadpisze (można dodać logikę czyszczenia)
@@ -25,6 +32,18 @@ namespace QuizApplication.Services
         public bool SessionExists(string accessCode)
         {
             return _sessions.ContainsKey(accessCode.ToUpper());
+        }
+
+        public bool IsNicknameTaken(string accessCode, string nickname)
+        {
+            if (_sessions.TryGetValue(accessCode.ToUpper(), out var session))
+            {
+                lock (session.Players)
+                {
+                    return session.Players.Any(p => p.Nickname.Equals(nickname, StringComparison.OrdinalIgnoreCase));
+                }
+            }
+            return false;
         }
 
         public void SetHostConnectionId(string accessCode, string connectionId)
@@ -66,6 +85,14 @@ namespace QuizApplication.Services
                 {
                     lock (session.Players)
                     {
+
+                        // Jeśli to Host się rozłączył
+                        if (session.HostConnectionId == connectionId)
+                        {
+                            session.HostConnectionId = string.Empty;
+                            return;
+                            // Tu można dodać logikę zamykania gry, jeśli Host wyjdzie
+                        }
                         var player = session.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
                         if (player != null)
                         {
@@ -74,12 +101,7 @@ namespace QuizApplication.Services
                             return;
                         }
 
-                        // Jeśli to Host się rozłączył
-                        if (session.HostConnectionId == connectionId)
-                        {
-                            session.HostConnectionId = string.Empty;
-                            // Tu można dodać logikę zamykania gry, jeśli Host wyjdzie
-                        }
+
                     }
                 }
             }

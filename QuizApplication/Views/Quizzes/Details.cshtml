@@ -9,6 +9,7 @@
 
 <div>
     <strong>Kod dostępu:</strong> @Model.AccessCode <br />
+    <string>ID Quizu: </string> @Model.Id <br/>
     <strong>Utworzono:</strong> @Model.CreatedAt.ToString("yyyy-MM-dd HH:mm") <br />
     <strong>Właściciel:</strong> @Model.Owner?.UserName ?? "—" <br />
 </div>
@@ -22,6 +23,7 @@
         <a asp-action="Edit" asp-route-id="@Model.Id" class="btn btn-primary">Edytuj quiz</a>
         <a asp-action="Delete" asp-route-id="@Model.Id" class="btn btn-danger">Usuń quiz</a>
         <a asp-controller="Questions" asp-action="Create" asp-route-quizId="@Model.Id" class="btn btn-success">Dodaj pytanie</a>
+        <a asp-controller="Game" asp-action="HostGame" asp-route-id="@Model.Id" class="btn btn-success">Graj</a>
     }
     else
     {

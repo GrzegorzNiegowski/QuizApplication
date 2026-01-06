@@ -20,14 +20,14 @@
 <script>
     // Używamy CDN dla pewności
     const connection = new signalR.HubConnectionBuilder()
-        .withUrl("/QuizHub")
+        .withUrl("/quizHub")
         .withAutomaticReconnect()
         .build();
 
-    // Odbieranie listy graczy z serwera
+    // 1. Odbieranie listy graczy (tak samo jak u Hosta)
     connection.on("UpdatePlayerList", function (players) {
         var list = document.getElementById("playersList");
-        list.innerHTML = ""; // Wyczyść listę
+        list.innerHTML = "";
         players.forEach(function (player) {
             var li = document.createElement("li");
             li.className = "list-group-item";
@@ -36,27 +36,26 @@
         });
     });
 
-    //HOST rozłączył się
-    connection.on("HostDiconnected", function()
-    {
-        alert("Host zakończył grę");
-        window.location.href("/Home/Index");
+    // 2. Host rozłączył grę
+    connection.on("HostDisconnected", function() {
+        alert("Nauczyciel zakończył grę.");
+        window.location.href = "/Home/Index";
     });
 
+    
     // 3. Obsługa błędów (np. zajęty nick)
     connection.on("ShowError", function (message) {
         alert(message);
         window.history.back(); // Wróć do formularza wpisywania nicku
     });
+    
 
-    // Start połączenia
+    // 4. Start połączenia
     connection.start().then(function () {
-        console.log("Połączono z SignalIR!");
-
-        // Po połączeniu, wywołaj metodę "JoinGame" na serwerze
         var code = "@ViewBag.Code";
         var nick = "@ViewBag.Nick";
 
+        // ZMIANA: Wywołujemy JoinGamePlayer zamiast JoinGame
         connection.invoke("JoinGamePlayer", code, nick).catch(function (err) {
             return console.error(err.toString());
         });

@@ -8,7 +8,7 @@ namespace QuizApplication.Hubs
     {
         private readonly IGameSessionService _sessionService;
 
-        public QuizHub(GameSessionService sessionService)
+        public QuizHub(IGameSessionService sessionService)
         {
             _sessionService = sessionService;
         }
@@ -61,23 +61,32 @@ namespace QuizApplication.Hubs
         // Metoda systemowa: wywoływana, gdy ktoś zamknie przeglądarkę
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
+            // Pobieramy ID połączenia, które właśnie zniknęło
+            var connectionId = Context.ConnectionId;
+            //Sprawdzamy w jakiej grze był dany użytkownik
             var accessCode = _sessionService.GetSessionIdByConnectionId(Context.ConnectionId);
 
-            if (accessCode != null)
+            if (!string.IsNullOrEmpty(accessCode))
             {
                 bool isHost = _sessionService.IsHost(Context.ConnectionId);
-                _sessionService.RemovePlayer(Context.ConnectionId);
+                //_sessionService.RemovePlayer(Context.ConnectionId);
 
                 if (isHost)
                 {
                     // Opcjonalnie: Poinformuj graczy, że host wyszedł
-                    await Clients.Group(accessCode).SendAsync("HostDisconnected");
+                    //await Clients.Group(accessCode).SendAsync("HostDisconnected");
                 }
                 else
                 {
+                    // Jeśli to GRACZ się rozłączył -> usuwamy go z listy
+                    _sessionService.RemovePlayer(connectionId);
+                    //powiadamiamy Hosta, że gracz uciekł (żeby zaktualizował listę na ekranie)
+                    await Clients.Group(accessCode.ToUpper()).SendAsync("PlayerLeft", connectionId);
+
+                    //Wyślij nową, pełną listę do Hosta, żeby mieć pewność spójności
                     // Zaktualizuj listę graczy pozostałym
                     var players = _sessionService.GetPlayersInSession(accessCode);
-                    await Clients.Group(accessCode).SendAsync("UpdatePlayerList", players);
+                    await Clients.Group(accessCode.ToUpper()).SendAsync("UpdatePlayerList", players);
                 }
             }
 

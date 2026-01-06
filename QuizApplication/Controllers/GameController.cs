@@ -37,6 +37,13 @@ namespace QuizApplication.Controllers
                 return View();
             }
 
+            if (_gameSessionService.IsNicknameTaken(accesCode, nickname))
+            {
+                ViewBag.Error = "Ten nick jest już zajęty w tej grze.";
+                // Zwracamy widok Join, użytkownik nie przechodzi dalej
+                return View();
+            }
+
             //przekierowanie do lobby gracz
             return RedirectToAction("Lobby", new { code = accesCode.ToUpper(), nick = nickname });
         }

@@ -26,5 +26,7 @@ namespace QuizApplication.Services
 
         // Ustawia ConnectionId dla Hosta (gdy ten połączy się przez SignalR)
         void SetHostConnectionId(string accesCode, string connectionId);
+
+        bool IsNicknameTaken(string accessCode, string nickname);
     }
 }
