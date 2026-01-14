@@ -3,6 +3,7 @@ using QuizApplication.Models.ViewModels;
 using QuizApplication.Models;
 using QuizApplication.Utilities;
 using Microsoft.EntityFrameworkCore;
+using QuizApplication.DTOs;
 namespace QuizApplication.Services
 {
     public class QuizService : IQuizService
@@ -15,115 +16,130 @@ namespace QuizApplication.Services
         }
 
 
-        public async Task<OperationResult<List<Quiz>>> GetQuizzesForUserAsync(string userId)
+        public async Task<OperationResult<QuizDto>> CreateQuizAsync(CreateQuizDto dto)
         {
-            if (string.IsNullOrWhiteSpace(userId))
-                return OperationResult<List<Quiz>>.Fail("Brak identyfikatora użytkownika.");
-
-            var quizzes = await _context.Quizzes
-                .AsNoTracking()
-                .Where(q => q.OwnerId == userId)
-                //.Include(q => q.Questions) // opcjonalnie, usuń jeśli nie chcesz pytań w Indexie
-                .ToListAsync();
-
-            return OperationResult<List<Quiz>>.Ok(quizzes);
-        }
-
-        public async Task<OperationResult<Quiz>> CreateQuizAsync(CreateQuizViewModel vm, string ownerId)
-        {
-            if (vm == null) return OperationResult<Quiz>.Fail("Brak danych");
-            if (string.IsNullOrWhiteSpace(vm.Title)) return OperationResult<Quiz>.Fail("Tytuł jest wymagany");
-            if (string.IsNullOrWhiteSpace(ownerId)) return OperationResult<Quiz>.Fail("Brak ownerId");
             var quiz = new Quiz
             {
-                Title = vm.Title.Trim(),
-                OwnerId = ownerId,
-                CreatedAt = DateTimeOffset.UtcNow,
-                AccessCode = await GenerateUniqueAccessCodeAsync()
+                Title = dto.Title,
+                OwnerId = dto.OwnerId,
+                AccessCode = await GenerateUniqueAccessCodeAsync(),
+                CreatedAt = DateTimeOffset.UtcNow
             };
 
             _context.Quizzes.Add(quiz);
             await _context.SaveChangesAsync();
-            return OperationResult<Quiz>.Ok(quiz);
+
+            return OperationResult<QuizDto>.Ok(MapToDto(quiz));
+        }
+
+        public async Task<OperationResult<QuizDto>> GetQuizByIdAsync(int id)
+        {
+            var quiz = await _context.Quizzes
+                .Include(q => q.Questions)
+                .ThenInclude(qu => qu.Answers)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(q => q.Id == id);
+
+            if (quiz == null) return OperationResult<QuizDto>.Fail("Nie znaleziono quizu.");
+
+            return OperationResult<QuizDto>.Ok(MapToDto(quiz));
+        }
+
+        public async Task<OperationResult<List<QuizDto>>> GetAllQuizzesForUserAsync(string userId)
+        {
+            var quizzes = await _context.Quizzes
+                .AsNoTracking()
+                .Where(q => q.OwnerId == userId)
+                .Include(q => q.Questions)
+                .OrderByDescending(q => q.CreatedAt)
+                .ToListAsync();
+
+            var dtos = quizzes.Select(q => MapToDto(q)).ToList();
+            return OperationResult<List<QuizDto>>.Ok(dtos);
+        }
+
+        public async Task<OperationResult> UpdateQuizTitleAsync(UpdateQuizDto dto, string userId, bool isAdmin)
+        {
+            var quiz = await _context.Quizzes.FindAsync(dto.Id);
+            if (quiz == null) return OperationResult.Fail("Quiz nie istnieje.");
+
+            if (!isAdmin && quiz.OwnerId != userId) return OperationResult.Fail("Brak uprawnień.");
+
+            quiz.Title = dto.Title;
+            await _context.SaveChangesAsync();
+            return OperationResult.Ok();
         }
 
         public async Task<OperationResult> DeleteQuizAsync(int quizId, string userId, bool isAdmin)
         {
             var quiz = await _context.Quizzes.FindAsync(quizId);
-            if (quiz == null) return OperationResult.Fail("Quiz nie istnieje");
-            if (!await IsOwnerOrAdminAsync(quizId, userId, isAdmin)) return OperationResult.Fail("Brak uprawnień");
+            if (quiz == null) return OperationResult.Fail("Quiz nie istnieje.");
 
-            var questionIds = await _context.Questions.Where(q => q.QuizId == quizId).Select(q => q.Id).ToListAsync();
-            if(questionIds.Any())
-            {
-                _context.Answers.RemoveRange(_context.Answers.Where(a => questionIds.Contains(a.QuestionId)));
-                _context.Questions.RemoveRange(_context.Questions.Where(q => questionIds.Contains(q.Id)));
-            }
+            if (!isAdmin && quiz.OwnerId != userId) return OperationResult.Fail("Brak uprawnień.");
 
             _context.Quizzes.Remove(quiz);
             await _context.SaveChangesAsync();
             return OperationResult.Ok();
         }
 
-        public async Task<OperationResult<Quiz>> GetQuizWithDetailsAsync(int id)
+        public async Task<OperationResult<QuizDto>> GetQuizByAccessCodeAsync(string accessCode)
         {
-            var quiz = await _context.Quizzes
-                .Include(q => q.Owner)
-                .Include(q => q.Questions)
-                    .ThenInclude(qn => qn.Answers)
-                .FirstOrDefaultAsync(q => q.Id == id);
+            var quiz = await _context.Quizzes.FirstOrDefaultAsync(q => q.AccessCode == accessCode);
+            if (quiz == null) return OperationResult<QuizDto>.Fail("Nie znaleziono quizu.");
 
-            if (quiz == null) return OperationResult<Quiz>.Fail("Quiz nie istnieje");
-            return OperationResult<Quiz>.Ok(quiz);
-        }
-
-        public async Task<OperationResult<Quiz>> GetByIdAsync(int id)
-        {
-            var q = await _context.Quizzes.FindAsync(id);
-            if (q == null) return OperationResult<Quiz>.Fail("Quiz nie istnieje.");
-            return OperationResult<Quiz>.Ok(q);
+            return OperationResult<QuizDto>.Ok(MapToDto(quiz));
         }
 
         public async Task<bool> IsOwnerOrAdminAsync(int quizId, string userId, bool isAdmin)
         {
             if (isAdmin) return true;
-            var quiz = await _context.Quizzes.AsNoTracking().FirstOrDefaultAsync(q => q.Id == quizId);
-            if (quiz == null) return false;
-            return quiz.OwnerId == userId;
+            var ownerId = await _context.Quizzes
+                .Where(q => q.Id == quizId)
+                .Select(q => q.OwnerId)
+                .FirstOrDefaultAsync();
+            return ownerId == userId;
         }
 
-        public async Task<OperationResult> UpdateTitleAsync(int quizId, string newTitle, string userId, bool isAdmin)
+        // --- Mapper ---
+        private static QuizDto MapToDto(Quiz q)
         {
-            var quiz = await _context.Quizzes.FindAsync(quizId);
-            if (quiz == null) return OperationResult.Fail("Quiz nie istnieje;");
-            if (!await IsOwnerOrAdminAsync(quizId, userId, isAdmin)) return OperationResult.Fail("Brak uprawnień");
-            quiz.Title = newTitle ?? "";
-            _context.Quizzes.Update(quiz);
-            await _context.SaveChangesAsync();
-            return OperationResult.Ok();
+            return new QuizDto
+            {
+                Id = q.Id,
+                Title = q.Title,
+                AccessCode = q.AccessCode,
+                OwnerId = q.OwnerId ?? "",
+                CreatedAt = q.CreatedAt,
+                QuestionCount = q.Questions?.Count ?? 0,
+                Questions = q.Questions?.Select(qu => new QuestionDto
+                {
+                    Id = qu.Id,
+                    QuizId = qu.QuizId,
+                    Content = qu.Content,
+                    TimeLimitSeconds = qu.TimeLimitSeconds,
+                    Points = qu.Points,
+                    ImageUrl = qu.ImageUrl,
+                    Answers = qu.Answers?.Select(a => new AnswerDto
+                    {
+                        Id = a.Id,
+                        Content = a.Content,
+                        IsCorrect = a.IsCorrect
+                    }).ToList() ?? new()
+                }).ToList() ?? new()
+            };
         }
 
-        
         private async Task<string> GenerateUniqueAccessCodeAsync()
         {
             string code;
-            do
-            {
-                code = GenerateRandomCode(5);
-
-            } while (await _context.Quizzes.AnyAsync(q => q.AccessCode == code));
-
+            do { code = GenerateRandomCode(5); }
+            while (await _context.Quizzes.AnyAsync(q => q.AccessCode == code));
             return code;
         }
-
-        private static string GenerateRandomCode(int length) 
+        private static string GenerateRandomCode(int length)
         {
             const string chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-            
-            return new string(Enumerable.Repeat(chars, length)
-        .Select(s => s[Random.Shared.Next(s.Length)]).ToArray());
+            return new string(Enumerable.Repeat(chars, length).Select(s => s[Random.Shared.Next(s.Length)]).ToArray());
         }
-
-
     }
 }

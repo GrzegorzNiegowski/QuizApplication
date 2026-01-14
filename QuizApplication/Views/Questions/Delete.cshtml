@@ -1,4 +1,4 @@
-﻿@model QuizApplication.Models.ViewModels.EditQuestionViewModel
+﻿@model QuizApplication.DTOs.QuestionDto
 @{
     ViewData["Title"] = "Usuń pytanie";
 }
@@ -6,7 +6,7 @@
 <h2>Usuń pytanie</h2>
 
 <div>
-    <p>Czy na pewno chcesz usunąć to pytanie z quizu <strong>@ViewBag.QuizTitle</strong>?</p>
+    <p>Czy na pewno chcesz usunąć to pytanie?</p>
     <div><strong>@Model.Content</strong></div>
     <ul>
         @foreach (var a in Model.Answers)
@@ -17,7 +17,7 @@
 
     <form asp-action="Delete" method="post">
         @Html.AntiForgeryToken()
-        <input type="hidden" name="questionId" value="@Model.QuestionId" />
+        <input type="hidden" name="questionId" value="@Model.Id" />
         <button type="submit" class="btn btn-danger">Usuń</button>
         <a asp-controller="Quizzes" asp-action="Details" asp-route-id="@Model.QuizId" class="btn btn-secondary">Anuluj</a>
     </form>

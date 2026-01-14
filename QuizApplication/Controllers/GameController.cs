@@ -44,8 +44,9 @@ namespace QuizApplication.Controllers
                 return View();
             }
 
-            //przekierowanie do lobby gracz
-            return RedirectToAction("Lobby", new { code = accesCode.ToUpper(), nick = nickname });
+            ViewBag.Code = accesCode;
+            ViewBag.Nick = nickname;
+            return View();
         }
 
 
@@ -68,19 +69,15 @@ namespace QuizApplication.Controllers
         [Microsoft.AspNetCore.Authorization.Authorize] // Tylko zalogowany
         public async Task<IActionResult> HostGame(int id)
         {
-            // 1. Pobierz quiz z bazy, żeby znać jego AccessCode
-            var result = await _quizService.GetByIdAsync(id);
-            if(!result.Success || result.Data == null)
-            {
-                return NotFound();
-            }
+            // Teraz pobieramy DTO
+            var result = await _quizService.GetQuizByIdAsync(id);
+            if (!result.Success || result.Data == null) return NotFound();
 
-            var quiz = result.Data;
-            // 2. Zainicjalizuj sesję w pamięci RAM
-            _gameSessionService.InitializeSession(quiz.AccessCode, quiz.Id);
+            var quizDto = result.Data;
 
-            // 3. Przekieruj Hosta do jego specjalnego Lobby
-            return RedirectToAction("LobbyHost", new {code = quiz.AccessCode});
+            _gameSessionService.InitializeSession(quizDto.AccessCode, quizDto.Id);
+
+            return RedirectToAction("LobbyHost", new { code = quizDto.AccessCode });
         }
 
         // GET: /Game/LobbyHost (Panel sterowania Hosta)

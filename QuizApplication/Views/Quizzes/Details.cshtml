@@ -1,5 +1,4 @@
-﻿@model QuizApplication.Models.Quiz
-
+﻿@model QuizApplication.DTOs.QuizDto
 @{
     ViewData["Title"] = "Szczegóły quizu";
 }
@@ -11,7 +10,7 @@
     <strong>Kod dostępu:</strong> @Model.AccessCode <br />
     <string>ID Quizu: </string> @Model.Id <br/>
     <strong>Utworzono:</strong> @Model.CreatedAt.ToString("yyyy-MM-dd HH:mm") <br />
-    <strong>Właściciel:</strong> @Model.Owner?.UserName ?? "—" <br />
+    
 </div>
 
 <hr />
@@ -20,7 +19,7 @@
 <p>
     @if (User.Identity?.IsAuthenticated == true && (User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value == Model.OwnerId || User.IsInRole("Admin")))
     {
-        <a asp-action="Edit" asp-route-id="@Model.Id" class="btn btn-primary">Edytuj quiz</a>
+        <a asp-action="Edit" asp-action="Edit" asp-route-id="@Model.Id" class="btn btn-primary">Edytuj quiz</a>
         <a asp-action="Delete" asp-route-id="@Model.Id" class="btn btn-danger">Usuń quiz</a>
         <a asp-controller="Questions" asp-action="Create" asp-route-quizId="@Model.Id" class="btn btn-success">Dodaj pytanie</a>
         <a asp-controller="Game" asp-action="HostGame" asp-route-id="@Model.Id" class="btn btn-success">Graj</a>
@@ -60,14 +59,9 @@
             </ul>
 
             @* opcjonalne linki edit/delete pytania  *@
+            
         </li>
     }
 </ol>
 }
-<div>
-    <a asp-action="Edit" asp-route-id="@Model?.Id">Edit</a> |
-    <a asp-action="Index">Back to List</a>
-    <a asp-controller="Questions" asp-action="Create" asp-route-quizId="@Model.Id" class="btn btn-primary">
-        Dodaj pytanie
-    </a>
-</div>
+

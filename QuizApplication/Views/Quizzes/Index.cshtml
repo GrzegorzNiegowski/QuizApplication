@@ -1,13 +1,12 @@
-﻿@model IEnumerable<QuizApplication.Models.Quiz>
-
+﻿@model IEnumerable<QuizApplication.DTOs.QuizDto>
 @{
-    ViewData["Title"] = "Index";
+    ViewData["Title"] = "Twoje Quizy";
 }
 
 <h1>Index</h1>
 
 <p>
-    <a asp-action="Create">Create New</a>
+    <a asp-action="Create">Utwórz nowy Quiz</a>
 </p>
 <table class="table">
     <thead>

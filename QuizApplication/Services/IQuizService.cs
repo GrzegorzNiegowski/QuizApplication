@@ -1,21 +1,22 @@
-﻿using QuizApplication.Models;
+﻿using QuizApplication.DTOs;
+using QuizApplication.Models;
 using QuizApplication.Models.ViewModels;
 using QuizApplication.Utilities;
+using System.Threading.Tasks;
 
 namespace QuizApplication.Services
 {
     public interface IQuizService
     {
-        Task<OperationResult<Quiz>> CreateQuizAsync(CreateQuizViewModel vm, string ownerId);
-        Task<OperationResult<Quiz>> GetQuizWithDetailsAsync(int id);
-        Task<OperationResult> UpdateTitleAsync(int quizId, string newTitle, string userId, bool isAdmin);
+        Task<OperationResult<QuizDto>> CreateQuizAsync(CreateQuizDto dto);
+        Task<OperationResult<QuizDto>> GetQuizByIdAsync(int id);
+        Task<OperationResult<List<QuizDto>>> GetAllQuizzesForUserAsync(string userId);
+        Task<OperationResult> UpdateQuizTitleAsync(UpdateQuizDto dto, string userId, bool isAdmin);
         Task<OperationResult> DeleteQuizAsync(int quizId, string userId, bool isAdmin);
+
+        // Pomocnicze
         Task<bool> IsOwnerOrAdminAsync(int quizId, string userId, bool isAdmin);
-        Task<OperationResult<Quiz>> GetByIdAsync(int id);
-
-
-        //
-        Task<OperationResult<List<Quiz>>> GetQuizzesForUserAsync(string userId);
+        Task<OperationResult<QuizDto>> GetQuizByAccessCodeAsync(string accessCode);
 
 
 
