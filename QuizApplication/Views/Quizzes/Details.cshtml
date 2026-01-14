@@ -1,67 +1,113 @@
 ﻿@model QuizApplication.DTOs.QuizDto
 @{
     ViewData["Title"] = "Szczegóły quizu";
+    // Sprawdzamy uprawnienia do edycji (Właściciel lub Admin)
+    bool canEdit = User.Identity?.IsAuthenticated == true &&
+                   (User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value == Model.OwnerId || User.IsInRole("Admin"));
 }
 
 <h2>@Model.Title</h2>
 
 
-<div>
-    <strong>Kod dostępu:</strong> @Model.AccessCode <br />
-    <string>ID Quizu: </string> @Model.Id <br/>
-    <strong>Utworzono:</strong> @Model.CreatedAt.ToString("yyyy-MM-dd HH:mm") <br />
-    
-</div>
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2>@Model.Title</h2>
+        @if (canEdit)
+        {
+            <div>
+                <a asp-action="Edit" asp-route-id="@Model.Id" class="btn btn-outline-primary btn-sm">Zmień tytuł</a>
+                <a asp-controller="Game" asp-action="HostGame" asp-route-id="@Model.Id" class="btn btn-success btn-lg ms-2">GRAJ (Host)</a>
+            </div>
+        }
+    </div>
 
-<hr />
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <p><strong>Kod dostępu:</strong> <span class="badge bg-secondary" style="font-size: 1.1em;">@Model.AccessCode</span></p>
+                    <p><strong>Utworzono:</strong> @Model.CreatedAt.ToString("yyyy-MM-dd HH:mm")</p>
+                </div>
+                <div class="col-md-6 text-end">
+                    <p><strong>Liczba pytań:</strong> @Model.Questions.Count</p>
+                </div>
+            </div>
+        </div>
+    </div>
 
-
-<p>
-    @if (User.Identity?.IsAuthenticated == true && (User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value == Model.OwnerId || User.IsInRole("Admin")))
+    @if (canEdit)
     {
-        <a asp-action="Edit" asp-action="Edit" asp-route-id="@Model.Id" class="btn btn-primary">Edytuj quiz</a>
-        <a asp-action="Delete" asp-route-id="@Model.Id" class="btn btn-danger">Usuń quiz</a>
-        <a asp-controller="Questions" asp-action="Create" asp-route-quizId="@Model.Id" class="btn btn-success">Dodaj pytanie</a>
-        <a asp-controller="Game" asp-action="HostGame" asp-route-id="@Model.Id" class="btn btn-success">Graj</a>
+        <div class="mb-3">
+            <a asp-controller="Questions" asp-action="Create" asp-route-quizId="@Model.Id" class="btn btn-primary">
+                + Dodaj nowe pytanie
+            </a>
+            <a asp-action="Delete" asp-route-id="@Model.Id" class="btn btn-danger float-end">Usuń cały quiz</a>
+        </div>
+    }
+
+    <hr />
+
+    <h3>Lista pytań</h3>
+
+    @if (Model.Questions == null || !Model.Questions.Any())
+    {
+        <div class="alert alert-info">Ten quiz nie ma jeszcze żadnych pytań.</div>
     }
     else
     {
-        <a asp-action="Index" class="btn btn-secondary">Powrót</a>
+        <div class="row">
+            @foreach (var q in Model.Questions.OrderBy(q => q.Id))
+            {
+                <div class="col-12 mb-3">
+                    <div class="card h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <strong>Pytanie #@q.Id</strong>
+                            <span>
+                                <span class="badge bg-info text-dark">@q.TimeLimitSeconds s</span>
+                                <span class="badge bg-warning text-dark">@q.Points pkt</span>
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <h5 class="card-title">@q.Content</h5>
+                            @if (!string.IsNullOrEmpty(q.ImageUrl))
+                            {
+                                <p><small>(Zawiera obrazek)</small></p>
+                            }
+
+                            <ul class="list-group list-group-flush mt-3 mb-3">
+                                @foreach (var a in q.Answers)
+                                {
+                                    <li class="list-group-item @(a.IsCorrect ? "list-group-item-success" : "")">
+                                        @a.Content
+                                        @if (a.IsCorrect)
+                                        {
+                                            <span class="float-end fw-bold">✓</span>
+                                        }
+                                    </li>
+                                }
+                            </ul>
+
+                            @if (canEdit)
+                            {
+                                <div class="d-flex justify-content-end gap-2">
+                                    <a asp-controller="Questions" asp-action="Edit" asp-route-id="@q.Id" class="btn btn-sm btn-outline-primary">
+                                        Edytuj (Pytanie i Odpowiedzi)
+                                    </a>
+                                    <a asp-controller="Questions" asp-action="Delete" asp-route-id="@q.Id" class="btn btn-sm btn-outline-danger">
+                                        Usuń
+                                    </a>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
     }
-</p>
 
-<hr />
+    <div class="mt-4">
+        <a asp-action="Index" class="btn btn-secondary">Wróć do listy quizów</a>
+    </div>
+</div>
 
-<h3>Pytania</h3>
-@if(Model.Questions == null || !Model.Questions.Any())
-{
-    <p>Brak pytań w tym quizie.</p>
-}
-{
-<ol>
-    @foreach (var q in Model.Questions.OrderBy(q => q.Id))
-    {
-        <li>
-            <div>
-                <strong>@q.Content</strong> <small>(@q.TimeLimitSeconds s)</small>
-            </div>
-            <ul>
-                @foreach (var a in q.Answers)
-                {
-                    <li>
-                        @a.Content
-                        @if (a.IsCorrect)
-                        {
-                            <span class="badge bg-success ms-2">poprawna</span>
-                        }
-                    </li>
-                }
-            </ul>
-
-            @* opcjonalne linki edit/delete pytania  *@
-            
-        </li>
-    }
-</ol>
-}
 
