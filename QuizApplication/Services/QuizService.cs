@@ -1,9 +1,11 @@
-﻿using QuizApplication.Data;
-using QuizApplication.Models.ViewModels;
-using QuizApplication.Models;
-using QuizApplication.Utilities;
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
+using QuizApplication.Data;
 using QuizApplication.DTOs;
+using QuizApplication.DTOs.GameDtos;
+using QuizApplication.DTOs.QuizDtos;
+using QuizApplication.Models;
+using QuizApplication.Models.ViewModels;
+using QuizApplication.Utilities;
 namespace QuizApplication.Services
 {
     public class QuizService : IQuizService
@@ -16,7 +18,7 @@ namespace QuizApplication.Services
         }
 
 
-        public async Task<OperationResult<QuizDto>> CreateQuizAsync(CreateQuizDto dto)
+        public async Task<OperationResult<QuizDetailsDto>> CreateQuizAsync(CreateQuizDto dto)
         {
             var quiz = new Quiz
             {
@@ -29,23 +31,40 @@ namespace QuizApplication.Services
             _context.Quizzes.Add(quiz);
             await _context.SaveChangesAsync();
 
-            return OperationResult<QuizDto>.Ok(MapToDto(quiz));
+            return await GetQuizDetailsAsync(quiz.Id);
         }
 
-        public async Task<OperationResult<QuizDto>> GetQuizByIdAsync(int id)
+        public async Task<OperationResult<QuizDetailsDto>> GetQuizDetailsAsync(int id)
         {
             var quiz = await _context.Quizzes
                 .Include(q => q.Questions)
-                .ThenInclude(qu => qu.Answers)
                 .AsNoTracking()
                 .FirstOrDefaultAsync(q => q.Id == id);
 
-            if (quiz == null) return OperationResult<QuizDto>.Fail("Nie znaleziono quizu.");
+            if (quiz == null) return OperationResult<QuizDetailsDto>.Fail("Nie znaleziono quizu.");
 
-            return OperationResult<QuizDto>.Ok(MapToDto(quiz));
+            var dto = new QuizDetailsDto
+            {
+                Id = quiz.Id,
+                Title = quiz.Title,
+                AccessCode = quiz.AccessCode,
+                OwnerId = quiz.OwnerId ?? "",
+                Questions = quiz.Questions.Select(q => new QuestionSummaryDto
+                {
+                    QuestionId = q.Id,
+                    Content = q.Content,
+                    TimeLimitSeconds = q.TimeLimitSeconds,
+                    Points = q.Points
+                    
+                }).ToList()
+            };
+
+            return OperationResult<QuizDetailsDto>.Ok(dto);
         }
 
-        public async Task<OperationResult<List<QuizDto>>> GetAllQuizzesForUserAsync(string userId)
+        
+
+        public async Task<OperationResult<List<QuizSummaryDto>>> GetAllQuizzesForUserAsync(string userId)
         {
             var quizzes = await _context.Quizzes
                 .AsNoTracking()
@@ -54,15 +73,22 @@ namespace QuizApplication.Services
                 .OrderByDescending(q => q.CreatedAt)
                 .ToListAsync();
 
-            var dtos = quizzes.Select(q => MapToDto(q)).ToList();
-            return OperationResult<List<QuizDto>>.Ok(dtos);
+            var dtos = quizzes.Select(q => new QuizSummaryDto
+            {
+                Id = q.Id,
+                Title = q.Title,
+                AccessCode = q.AccessCode,
+                QuestionCount = q.Questions?.Count ?? 0,
+                CreatedAt = q.CreatedAt
+            }).ToList();
+
+            return OperationResult<List<QuizSummaryDto>>.Ok(dtos);
         }
 
         public async Task<OperationResult> UpdateQuizTitleAsync(UpdateQuizDto dto, string userId, bool isAdmin)
         {
             var quiz = await _context.Quizzes.FindAsync(dto.Id);
             if (quiz == null) return OperationResult.Fail("Quiz nie istnieje.");
-
             if (!isAdmin && quiz.OwnerId != userId) return OperationResult.Fail("Brak uprawnień.");
 
             quiz.Title = dto.Title;
@@ -74,7 +100,6 @@ namespace QuizApplication.Services
         {
             var quiz = await _context.Quizzes.FindAsync(quizId);
             if (quiz == null) return OperationResult.Fail("Quiz nie istnieje.");
-
             if (!isAdmin && quiz.OwnerId != userId) return OperationResult.Fail("Brak uprawnień.");
 
             _context.Quizzes.Remove(quiz);
@@ -82,13 +107,6 @@ namespace QuizApplication.Services
             return OperationResult.Ok();
         }
 
-        public async Task<OperationResult<QuizDto>> GetQuizByAccessCodeAsync(string accessCode)
-        {
-            var quiz = await _context.Quizzes.FirstOrDefaultAsync(q => q.AccessCode == accessCode);
-            if (quiz == null) return OperationResult<QuizDto>.Fail("Nie znaleziono quizu.");
-
-            return OperationResult<QuizDto>.Ok(MapToDto(quiz));
-        }
 
         public async Task<bool> IsOwnerOrAdminAsync(int quizId, string userId, bool isAdmin)
         {
@@ -100,34 +118,41 @@ namespace QuizApplication.Services
             return ownerId == userId;
         }
 
-        // --- Mapper ---
-        private static QuizDto MapToDto(Quiz q)
+
+        public async Task<OperationResult<GameQuizDto>> GetQuizForGameAsync(int id)
         {
-            return new QuizDto
+            var quiz = await _context.Quizzes
+                .Include(q => q.Questions)
+                .ThenInclude(qu => qu.Answers)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(q => q.Id == id);
+
+            if (quiz == null) return OperationResult<GameQuizDto>.Fail("Nie znaleziono.");
+
+            var dto = new GameQuizDto
             {
-                Id = q.Id,
-                Title = q.Title,
-                AccessCode = q.AccessCode,
-                OwnerId = q.OwnerId ?? "",
-                CreatedAt = q.CreatedAt,
-                QuestionCount = q.Questions?.Count ?? 0,
-                Questions = q.Questions?.Select(qu => new QuestionDto
+                Id = quiz.Id,
+                Title = quiz.Title,
+                AccessCode = quiz.AccessCode,
+                Questions = quiz.Questions.Select(q => new GameQuestionDto
                 {
-                    Id = qu.Id,
-                    QuizId = qu.QuizId,
-                    Content = qu.Content,
-                    TimeLimitSeconds = qu.TimeLimitSeconds,
-                    Points = qu.Points,
-                    ImageUrl = qu.ImageUrl,
-                    Answers = qu.Answers?.Select(a => new AnswerDto
+                    Id = q.Id,
+                    Content = q.Content,
+                    TimeLimitSeconds = q.TimeLimitSeconds,
+                    Points = q.Points,
+                    Answers = q.Answers.Select(a => new GameAnswerDto
                     {
                         Id = a.Id,
                         Content = a.Content,
                         IsCorrect = a.IsCorrect
-                    }).ToList() ?? new()
-                }).ToList() ?? new()
+                    }).ToList()
+                }).ToList()
             };
+
+            return OperationResult<GameQuizDto>.Ok(dto);
         }
+
+
 
         private async Task<string> GenerateUniqueAccessCodeAsync()
         {

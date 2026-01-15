@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using QuizApplication.DTOs;
+using QuizApplication.DTOs.QuizDtos;
 using QuizApplication.Models;
 using QuizApplication.Models.ViewModels;
 using QuizApplication.Services;
@@ -25,12 +26,10 @@ namespace QuizApplication.Controllers
         public async Task<IActionResult> Index()
         {
             if (!User.Identity?.IsAuthenticated ?? true)
-                return View(new List<QuizDto>());
+                return View(new List<QuizSummaryDto>());
 
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
             var result = await _quizService.GetAllQuizzesForUserAsync(userId);
-
-            // Wysyłamy do widoku listę DTO
             return View(result.Data);
         }
 
@@ -38,7 +37,7 @@ namespace QuizApplication.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> Details(int id)
         {
-            var result = await _quizService.GetQuizByIdAsync(id);
+            var result = await _quizService.GetQuizDetailsAsync(id);
             if (!result.Success) return NotFound();
 
             // Wysyłamy do widoku DTO
@@ -78,7 +77,7 @@ namespace QuizApplication.Controllers
         // GET: /Quizzes/Edit/5
         public async Task<IActionResult> Edit(int id)
         {
-            var result = await _quizService.GetQuizByIdAsync(id);
+            var result = await _quizService.GetQuizDetailsAsync(id);
             if (!result.Success) return NotFound();
 
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -123,7 +122,7 @@ namespace QuizApplication.Controllers
         // GET: /Quizzes/Delete/5
         public async Task<IActionResult> Delete(int id)
         {
-            var result = await _quizService.GetQuizByIdAsync(id);
+            var result = await _quizService.GetQuizDetailsAsync(id);
             if (!result.Success) return NotFound();
 
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;

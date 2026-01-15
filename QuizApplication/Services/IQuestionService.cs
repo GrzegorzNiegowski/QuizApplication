@@ -1,14 +1,15 @@
-﻿using QuizApplication.Models.ViewModels;
+﻿using QuizApplication.DTOs;
+using QuizApplication.DTOs.QuestionDtos;
+using QuizApplication.Models.ViewModels;
 using QuizApplication.Utilities;
-using QuizApplication.DTOs;
 
 namespace QuizApplication.Services
 {
     public interface IQuestionService
     {
-        Task<OperationResult> AddQuestionAsync(QuestionDto dto, string userId, bool isAdmin);
-        Task<OperationResult<QuestionDto>> GetQuestionByIdAsync(int questionId, string userId, bool isAdmin);
-        Task<OperationResult> UpdateQuestionAsync(QuestionDto dto, string userId, bool isAdmin);
+        Task<OperationResult> AddQuestionAsync(CreateQuestionDto dto, string userId, bool isAdmin);
+        Task<OperationResult<EditQuestionDto>> GetQuestionForEditAsync(int questionId, string userId, bool isAdmin);
+        Task<OperationResult> UpdateQuestionAsync(EditQuestionDto dto, string userId, bool isAdmin);
         Task<OperationResult> DeleteQuestionAsync(int questionId, string userId, bool isAdmin);
     }
 }

@@ -1,6 +1,12 @@
-﻿using QuizApplication.Models;
+﻿using QuizApplication.DTOs;
+using QuizApplication.DTOs.GameDtos;
+using QuizApplication.DTOs.RealTimeDtos;
+using QuizApplication.DTOs.SessionDtos;
+using QuizApplication.Models;
 using QuizApplication.Utilities;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+
 
 namespace QuizApplication.Services
 {
@@ -9,114 +15,85 @@ namespace QuizApplication.Services
         // Klucz: AccessCode (np. "ABC12") -> Wartość: Dane sesji
         private readonly ConcurrentDictionary<string, GameSession> _sessions = new();
 
-        public void InitializeSession(string accessCode, int quizId)
+        public void InitializeSession(StartSessionDto dto, GameQuizDto gameQuiz)
         {
+            var code = gameQuiz.AccessCode.ToUpper();
+            if (_sessions.ContainsKey(code)) return;
 
-            // Jeśli sesja już istnieje (np. po odświeżeniu), nie twórz nowej, zachowaj stan
-            if(_sessions.ContainsKey(accessCode.ToUpper()))
-            {
-                return;
-            }
-            // Tworzymy pustą sesję. Host przypisze swoje ConnectionId dopiero jak połączy się przez SignalR
             var session = new GameSession
             {
-                QuizId = quizId,
+                QuizId = dto.QuizId,
+                QuizData = gameQuiz,
                 Players = new List<Player>(),
-                HostConnectionId = ""
+                HostConnectionId = "",
+                CurrentQuestionIndex = -1,
+                IsGameStarted = false
             };
-
-            // TryAdd - jeśli sesja o takim kodzie już istnieje (np. wisząca), to jej nie nadpisze (można dodać logikę czyszczenia)
-            _sessions.TryAdd(accessCode.ToUpper(), session);
+            _sessions.TryAdd(code, session);
         }
 
-        public bool SessionExists(string accessCode)
-        {
-            return _sessions.ContainsKey(accessCode.ToUpper());
-        }
+        public bool SessionExists(string sessionCode)
+            => !string.IsNullOrEmpty(sessionCode) && _sessions.ContainsKey(sessionCode.ToUpper());
 
-        public bool IsNicknameTaken(string accessCode, string nickname)
+        public JoinSessionResultDto AddPlayer(JoinSessionDto dto, string connectionId)
         {
-            if (_sessions.TryGetValue(accessCode.ToUpper(), out var session))
+            var code = dto.SessionCode.ToUpper();
+            if (!_sessions.TryGetValue(code, out var session))
             {
-                lock (session.Players)
+                return new JoinSessionResultDto { Success = false, Error = "Sesja nie istnieje" };
+            }
+
+            lock (session.Players)
+            {
+                if (session.Players.Any(p => p.Nickname.Equals(dto.PlayerName, StringComparison.OrdinalIgnoreCase)))
                 {
-                    return session.Players.Any(p => p.Nickname.Equals(nickname, StringComparison.OrdinalIgnoreCase));
+                    return new JoinSessionResultDto { Success = false, Error = "Nick zajęty" };
                 }
-            }
-            return false;
-        }
 
-        public void SetHostConnectionId(string accessCode, string connectionId)
-        {
-            if (_sessions.TryGetValue(accessCode.ToUpper(), out var session))
-            {
-                session.HostConnectionId = connectionId;
-            }
-        }
-
-        public bool AddPlayer(string accessCode, string connectionId, string nickname)
-        {
-            if (!_sessions.TryGetValue(accessCode.ToUpper(), out var session))
-            {
-                return false; // Sesja nie istnieje
-            }
-
-            lock (session.Players) // Blokada dla bezpieczeństwa listy przy wielu wątkach
-            {
-                if (session.Players.Any(p => p.Nickname.Equals(nickname, StringComparison.OrdinalIgnoreCase)))
-                {
-                    return false; // Nick zajęty
-                }
+                // Generujemy ParticipantId jeśli nie przyszło (np. przy zwykłym join)
+                var participantId = dto.ParticipantId ?? Guid.NewGuid();
 
                 session.Players.Add(new Player
                 {
                     ConnectionId = connectionId,
-                    Nickname = nickname
+                    Nickname = dto.PlayerName,
+                    Score = 0,
+                    // W modelu Player warto dodać pole ParticipantId (Guid), 
+                    // ale na razie możemy to pominąć lub mapować w locie.
                 });
+
+                return new JoinSessionResultDto
+                {
+                    Success = true,
+                    SessionCode = code,
+                    ParticipantId = participantId
+                };
             }
-            return true;
         }
 
         public void RemovePlayer(string connectionId)
         {
-            foreach (var key in _sessions.Keys)
+            var code = GetSessionIdByConnectionId(connectionId);
+            if (code != null && _sessions.TryGetValue(code, out var session))
             {
-                if (_sessions.TryGetValue(key, out var session))
+                lock (session.Players)
                 {
-                    lock (session.Players)
-                    {
-
-                        // Jeśli to Host się rozłączył
-                        if (session.HostConnectionId == connectionId)
-                        {
-                            session.HostConnectionId = string.Empty;
-                            return;
-                            // Tu można dodać logikę zamykania gry, jeśli Host wyjdzie
-                        }
-                        var player = session.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
-                        if (player != null)
-                        {
-                            session.Players.Remove(player);
-                            // Jeśli pokój jest pusty i nie ma hosta, można usunąć sesję (opcjonalne)
-                            return;
-                        }
-
-
-                    }
+                    var player = session.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+                    if (player != null) session.Players.Remove(player);
                 }
             }
         }
 
-        public List<string> GetPlayersInSession(string accessCode)
+        public List<PlayerScoreDto> GetPlayersInSession(string sessionCode)
         {
-            if (_sessions.TryGetValue(accessCode.ToUpper(), out var session))
+            if (_sessions.TryGetValue(sessionCode.ToUpper(), out var session))
             {
                 lock (session.Players)
                 {
-                    return session.Players.Select(p => p.Nickname).ToList();
+                    return session.Players.Select(p => new PlayerScoreDto { PlayerName = p.Nickname, Score = p.Score }).ToList();
                 }
             }
-            return new List<string>();
+            return new List<PlayerScoreDto>();
         }
 
         public string? GetSessionIdByConnectionId(string connectionId)
@@ -132,13 +109,94 @@ namespace QuizApplication.Services
             return null;
         }
 
-        public bool IsHost(string connectionId)
+        public bool IsHost(string connectionId) => _sessions.Values.Any(s => s.HostConnectionId == connectionId);
+
+        public void SetHostConnectionId(string sessionCode, string connectionId)
         {
-            foreach (var entry in _sessions.Values)
+            if (_sessions.TryGetValue(sessionCode.ToUpper(), out var session))
             {
-                if (entry.HostConnectionId == connectionId) return true;
+                session.HostConnectionId = connectionId;
             }
+        }
+
+        public bool IsNicknameTaken(string sessionCode, string nickname)
+        {
+            if (_sessions.TryGetValue(sessionCode.ToUpper(), out var s))
+                return s.Players.Any(p => p.Nickname.Equals(nickname, StringComparison.OrdinalIgnoreCase));
             return false;
+        }
+
+        // --- GAME LOGIC ---
+
+        public QuestionForPlayerDto? NextQuestion(string sessionCode)
+        {
+            if (_sessions.TryGetValue(sessionCode.ToUpper(), out var s))
+            {
+                s.IsGameStarted = true;
+                s.CurrentQuestionIndex++;
+
+                if (s.QuizData != null && s.CurrentQuestionIndex < s.QuizData.Questions.Count)
+                {
+                    var fullQ = s.QuizData.Questions[s.CurrentQuestionIndex];
+
+                    // MAPOWANIE NA BEZPIECZNE DTO (Bez IsCorrect)
+                    return new QuestionForPlayerDto
+                    {
+                        QuestionId = fullQ.Id,
+                        Content = fullQ.Content,
+                        TimeLimitSeconds = fullQ.TimeLimitSeconds,
+                        Points = fullQ.Points,
+                        CurrentQuestionIndex = s.CurrentQuestionIndex + 1,
+                        TotalQuestions = s.QuizData.Questions.Count,
+                        Answers = fullQ.Answers.Select(a => new AnswerForPlayerDto
+                        {
+                            AnswerId = a.Id,
+                            Content = a.Content
+                        }).ToList()
+                    };
+                }
+            }
+            return null; // Koniec gry
+        }
+        
+
+        public void SubmitAnswer(string connectionId, SubmitAnswerDto dto)
+        {
+            var code = GetSessionIdByConnectionId(connectionId);
+            if (code == null || !_sessions.TryGetValue(code, out var s)) return;
+
+            // Spr czy gra trwa i index poprawny
+            if (s.CurrentQuestionIndex < 0 || s.QuizData == null || s.CurrentQuestionIndex >= s.QuizData.Questions.Count) return;
+
+            var currentQ = s.QuizData.Questions[s.CurrentQuestionIndex];
+
+            // Walidacja czy gracz odpowiada na bieżące pytanie
+            if (currentQ.Id != dto.QuestionId) return;
+
+            var isCorrect = currentQ.Answers.Any(a => a.Id == dto.AnswerId && a.IsCorrect);
+            if (isCorrect)
+            {
+                lock (s.Players)
+                {
+                    var p = s.Players.FirstOrDefault(x => x.ConnectionId == connectionId);
+                    if (p != null) p.Score += currentQ.Points;
+                }
+            }
+        }
+
+        public ScoreboardDto GetLeaderboard(string sessionCode)
+        {
+            var res = new ScoreboardDto();
+            if (_sessions.TryGetValue(sessionCode.ToUpper(), out var s))
+            {
+                lock (s.Players)
+                {
+                    res.Players = s.Players.OrderByDescending(p => p.Score)
+                        .Select(p => new PlayerScoreDto { PlayerName = p.Nickname, Score = p.Score })
+                        .ToList();
+                }
+            }
+            return res;
         }
     }
 }

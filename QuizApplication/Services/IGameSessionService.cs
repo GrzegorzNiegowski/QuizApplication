@@ -1,32 +1,31 @@
-﻿using System.Drawing;
+﻿using QuizApplication.DTOs;
+using QuizApplication.DTOs.GameDtos;
+using QuizApplication.DTOs.RealTimeDtos;
+using QuizApplication.DTOs.SessionDtos;
+using System.Drawing;
 
 namespace QuizApplication.Services
 {
     public interface IGameSessionService
     {
-        // Inicjalizuje sesję (robi to Host/Nauczyciel)
-        void InitializeSession(string accesCode, int quizId);
+        // Zarządzanie sesją
+        void InitializeSession(StartSessionDto dto, GameQuizDto gameQuiz);
+        bool SessionExists(string sessionCode);
 
-        //Sprawdza czy sesja istnieje
-        bool SessionExists(string accesCode);
-        // Dodaje gracza (zwraca false, jeśli nick jest zajęty)
-        bool AddPlayer(string accesCode, string connectionId, string nickname);
-
-        // Usuwa gracza (lub hosta) po rozłączeniu
+        // Zarządzanie graczami
+        JoinSessionResultDto AddPlayer(JoinSessionDto dto, string connectionId);
         void RemovePlayer(string connectionId);
+        List<PlayerScoreDto> GetPlayersInSession(string sessionCode);
 
-        // Pobiera listę nicków w danej sesji
-        List<string> GetPlayersInSession(string accesCode);
-
-        // Pomocnicze: znajdź kod sesji po ID połączenia
+        // Helpery
         string? GetSessionIdByConnectionId(string connectionId);
-
-        // Sprawdza, czy dany ConnectionId to Host
         bool IsHost(string connectionId);
+        void SetHostConnectionId(string sessionCode, string connectionId);
+        bool IsNicknameTaken(string sessionCode, string nickname);
 
-        // Ustawia ConnectionId dla Hosta (gdy ten połączy się przez SignalR)
-        void SetHostConnectionId(string accesCode, string connectionId);
-
-        bool IsNicknameTaken(string accessCode, string nickname);
+        // Rozgrywka (Logika)
+        QuestionForPlayerDto? NextQuestion(string sessionCode);
+        void SubmitAnswer(string connectionId, SubmitAnswerDto dto);
+        ScoreboardDto GetLeaderboard(string sessionCode);
     }
 }

@@ -1,4 +1,5 @@
-﻿using QuizApplication.Models;
+﻿using QuizApplication.DTOs.GameDtos;
+using QuizApplication.Models;
 namespace QuizApplication.Utilities
 {
     public class GameSession
@@ -8,5 +9,8 @@ namespace QuizApplication.Utilities
         public string HostConnectionId { get; set; } = string.Empty; // ID połączenia Hosta
         public List<Player> Players { get; set; } = new();
         // Tu w przyszłości dojdzie np. CurrentQuestionIndex
+        public GameQuizDto? QuizData { get; set; }
+        public bool IsGameStarted { get; set; } = false;
+        public int CurrentQuestionIndex { get; set; } = 0;
     }
 }

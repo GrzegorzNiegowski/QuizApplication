@@ -1,4 +1,4 @@
-﻿@model QuizApplication.DTOs.QuestionDto
+﻿@model QuizApplication.DTOs.QuestionDtos.EditQuestionDto
 @{
     ViewData["Title"] = "Usuń pytanie";
 }
@@ -17,7 +17,7 @@
 
     <form asp-action="Delete" method="post">
         @Html.AntiForgeryToken()
-        <input type="hidden" name="questionId" value="@Model.Id" />
+        <input type="hidden" name="questionId" value="@Model.QuestionId" />
         <button type="submit" class="btn btn-danger">Usuń</button>
         <a asp-controller="Quizzes" asp-action="Details" asp-route-id="@Model.QuizId" class="btn btn-secondary">Anuluj</a>
     </form>

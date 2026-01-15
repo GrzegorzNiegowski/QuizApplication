@@ -1,4 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using QuizApplication.DTOs.GameDtos;
+using QuizApplication.DTOs.SessionDtos;
 using QuizApplication.Services;
 
 namespace QuizApplication.Controllers
@@ -23,30 +25,23 @@ namespace QuizApplication.Controllers
 
         // POST: /Game/Join (Walidacja formularza przed wejściem do Lobby)
         [HttpPost]
-        public IActionResult Join(string accesCode, string nickname)
+        public IActionResult Join(JoinSessionDto dto)
         {
-            if(string.IsNullOrWhiteSpace(accesCode) || string.IsNullOrWhiteSpace(nickname))
+            // Tu tylko wstępna walidacja, właściwe dołączenie przez SignalR w JS
+            if (string.IsNullOrWhiteSpace(dto.SessionCode) || string.IsNullOrWhiteSpace(dto.PlayerName))
             {
-                ViewBag.Error = "Kod i nick są wymagane";
+                ViewBag.Error = "Dane są wymagane";
                 return View();
             }
-            // Sprawdź czy sesja w ogóle istnieje w pamięci
-            if(!_gameSessionService.SessionExists(accesCode))
+            if (!_gameSessionService.SessionExists(dto.SessionCode))
             {
-                ViewBag.Error = "Nie znaleziono aktywnej gry o takim kodzie";
-                return View();
-            }
-
-            if (_gameSessionService.IsNicknameTaken(accesCode, nickname))
-            {
-                ViewBag.Error = "Ten nick jest już zajęty w tej grze.";
-                // Zwracamy widok Join, użytkownik nie przechodzi dalej
+                ViewBag.Error = "Sesja nie istnieje";
                 return View();
             }
 
-            ViewBag.Code = accesCode;
-            ViewBag.Nick = nickname;
-            return View();
+            ViewBag.Code = dto.SessionCode;
+            ViewBag.Nick = dto.PlayerName;
+            return View("Lobby");
         }
 
 
@@ -69,15 +64,16 @@ namespace QuizApplication.Controllers
         [Microsoft.AspNetCore.Authorization.Authorize] // Tylko zalogowany
         public async Task<IActionResult> HostGame(int id)
         {
-            // Teraz pobieramy DTO
-            var result = await _quizService.GetQuizByIdAsync(id);
+            // POBIERAMY DANE DO GRY (FULL)
+            var result = await _quizService.GetQuizForGameAsync(id);
             if (!result.Success || result.Data == null) return NotFound();
 
-            var quizDto = result.Data;
+            var gameQuizDto = result.Data;
 
-            _gameSessionService.InitializeSession(quizDto.AccessCode, quizDto.Id);
+            // Inicjujemy sesję w pamięci
+            _gameSessionService.InitializeSession(new StartSessionDto { QuizId = id }, gameQuizDto);
 
-            return RedirectToAction("LobbyHost", new { code = quizDto.AccessCode });
+            return RedirectToAction("LobbyHost", new { code = gameQuizDto.AccessCode });
         }
 
         // GET: /Game/LobbyHost (Panel sterowania Hosta)
@@ -88,8 +84,27 @@ namespace QuizApplication.Controllers
             {
                 return RedirectToAction("Index", "Quizzes"); //wracamy do listy jeśli sesja wygasła
             }
-            ViewBag.Code = code;
+            ViewBag.AccessCode = code;
             // Tutaj nie potrzebujemy nicku, bo to Host
+            return View();
+        }
+
+        // --- ROZGRYWKA (NOWA AKCJA) ---
+        // Tutaj trafią wszyscy po sygnale "GameStarted"
+        public IActionResult Play(string code, string? nick)
+        {
+            if(!_gameSessionService.SessionExists(code))
+            {
+                return RedirectToAction("Index", "Home");
+            }
+
+            ViewBag.Code = code;
+
+            // Sprawdzamy czy to host (zalogowany właściciel) czy gracz (ma nick)
+            // Uproszczenie: Jeśli nick jest pusty, zakładamy że to Host (zalogowany w systemie)
+            bool isHost = string.IsNullOrEmpty(nick);
+            ViewBag.IsHost = isHost;
+            ViewBag.Nick = nick ?? "Host";
             return View();
         }
     }

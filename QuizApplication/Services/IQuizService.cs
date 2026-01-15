@@ -1,4 +1,6 @@
 ﻿using QuizApplication.DTOs;
+using QuizApplication.DTOs.GameDtos;
+using QuizApplication.DTOs.QuizDtos;
 using QuizApplication.Models;
 using QuizApplication.Models.ViewModels;
 using QuizApplication.Utilities;
@@ -8,15 +10,17 @@ namespace QuizApplication.Services
 {
     public interface IQuizService
     {
-        Task<OperationResult<QuizDto>> CreateQuizAsync(CreateQuizDto dto);
-        Task<OperationResult<QuizDto>> GetQuizByIdAsync(int id);
-        Task<OperationResult<List<QuizDto>>> GetAllQuizzesForUserAsync(string userId);
+        Task<OperationResult<QuizDetailsDto>> CreateQuizAsync(CreateQuizDto dto);
+        Task<OperationResult<QuizDetailsDto>> GetQuizDetailsAsync(int id);
+        Task<OperationResult<List<QuizSummaryDto>>> GetAllQuizzesForUserAsync(string userId);
         Task<OperationResult> UpdateQuizTitleAsync(UpdateQuizDto dto, string userId, bool isAdmin);
         Task<OperationResult> DeleteQuizAsync(int quizId, string userId, bool isAdmin);
 
-        // Pomocnicze
+        // Helpery
         Task<bool> IsOwnerOrAdminAsync(int quizId, string userId, bool isAdmin);
-        Task<OperationResult<QuizDto>> GetQuizByAccessCodeAsync(string accessCode);
+
+        // DLA GRY (Pobiera pełne dane z odpowiedziami do pamięci RAM)
+        Task<OperationResult<GameQuizDto>> GetQuizForGameAsync(int id);
 
 
 

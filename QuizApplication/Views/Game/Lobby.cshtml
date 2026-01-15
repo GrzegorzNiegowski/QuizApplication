@@ -7,62 +7,54 @@
 }
 <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
 
-<div class="text-center">
+<div class="text-center mt-5">
     <h1 class="display-4">Kod gry: <span class="text-primary">@ViewBag.Code</span></h1>
-    <h3>Witaj, @ViewBag.Nick! Czekamy na rozpoczęcie...</h3>
-    <hr />
+    <h3>Witaj, <strong>@ViewBag.Nick</strong>!</h3>
+    <div class="spinner-border text-primary mt-3" role="status">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+    <p class="mt-3 text-muted">Czekamy na rozpoczęcie gry przez gospodarza...</p>
 
+    <hr />
     <h4>Gracze w pokoju:</h4>
-    <ul id="playersList" class="list-group list-group-flush" style="max-width: 400px; margin: 0 auto;">
+    <ul id="playersList" class="list-group list-group-flush mx-auto" style="max-width: 400px;">
     </ul>
 </div>
 
 <script>
-    // Używamy CDN dla pewności
     const connection = new signalR.HubConnectionBuilder()
         .withUrl("/quizHub")
         .withAutomaticReconnect()
         .build();
 
-    // 1. Odbieranie listy graczy (tak samo jak u Hosta)
+    const code = "@ViewBag.Code";
+    const nick = "@ViewBag.Nick";
+
     connection.on("UpdatePlayerList", function (players) {
-        var list = document.getElementById("playersList");
+        const list = document.getElementById("playersList");
         list.innerHTML = "";
-        players.forEach(function (player) {
-            var li = document.createElement("li");
-            li.className = "list-group-item";
-            li.textContent = player;
+        players.forEach(p => {
+            const li = document.createElement("li");
+            li.className = "list-group-item" + (p === nick ? " list-group-item-primary" : "");
+            li.textContent = p + (p === nick ? " (Ty)" : "");
             list.appendChild(li);
         });
     });
 
-    // 2. Host rozłączył grę
-    connection.on("HostDisconnected", function() {
-        alert("Nauczyciel zakończył grę.");
-        window.location.href = "/Home/Index";
+    connection.on("GameStarted", function () {
+        // Przekierowanie Gracza do ekranu gry
+        // Kodujemy nick, żeby nie zgubić polskich znaków w URL
+        window.location.href = `/Game/Play?code=${code}&nick=${encodeURIComponent(nick)}`;
     });
 
-    
-    // 3. Obsługa błędów (np. zajęty nick)
-    connection.on("ShowError", function (message) {
-        alert(message);
-        window.history.back(); // Wróć do formularza wpisywania nicku
+    connection.on("ShowError", function (msg) {
+        alert(msg);
+        window.location.href = "/Game/Join";
     });
-    
 
-    // 4. Start połączenia
     connection.start().then(function () {
-        var code = "@ViewBag.Code";
-        var nick = "@ViewBag.Nick";
-
-        // ZMIANA: Wywołujemy JoinGamePlayer zamiast JoinGame
-        connection.invoke("JoinGamePlayer", code, nick).catch(function (err) {
-            return console.error(err.toString());
-        });
-
-    }).catch(function (err) {
-        return console.error(err.toString());
-    });
+        connection.invoke("JoinGamePlayer", code, nick).catch(err => console.error(err));
+    }).catch(err => console.error(err));
 </script>
 
 @{

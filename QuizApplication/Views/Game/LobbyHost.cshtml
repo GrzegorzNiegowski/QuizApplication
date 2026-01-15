@@ -12,8 +12,8 @@
     <div class="card shadow-sm">
         <div class="card-body">
             <h2 class="text-muted">Kod dołączenia do gry:</h2>
-            <h1 class="display-1 fw-bold text-primary tracking-widest" style="letter-spacing: 5px;">
-                @ViewBag.Code
+            <h1 class="display-1 fw-bold text-primary" style="letter-spacing: 5px;">
+                @ViewBag.AccessCode
             </h1>
             <p class="mb-4">Poproś graczy, aby weszli w zakładkę "Dołącz" i wpisali ten kod.</p>
 
@@ -21,14 +21,14 @@
 
             <h4 class="mb-3">Dołączyli gracze (<span id="playerCount">0</span>):</h4>
 
-            <div class="d-flex justify-content-center flex-wrap gap-2" id="playersList">
-                <span class="text-muted fst-italic" id="waitingMsg">Oczekiwanie na graczy...</span>
-            </div>
+            <ul class="list-group list-group-flush mx-auto" style="max-width: 500px;" id="playersList">
+                <li class="list-group-item text-muted fst-italic" id="waitingMsg">Oczekiwanie na graczy...</li>
+            </ul>
 
             <hr class="mt-4" />
 
             <button id="startGameBtn" class="btn btn-success btn-lg px-5" disabled>
-                ROZPOCZNIJ GRĘ
+                Rozpocznij Grę 🚀
             </button>
         </div>
     </div>
@@ -40,51 +40,55 @@
         .withAutomaticReconnect()
         .build();
 
-    // 1. Odbieranie listy graczy
+    const code = "@ViewBag.AccessCode";
+
+    // 1. Aktualizacja listy graczy
     connection.on("UpdatePlayerList", function (players) {
-        console.log("Otrzymano listę graczy", players);
+        console.log("Otrzymano listę graczy:", players);
+
         const list = document.getElementById("playersList");
         const countSpan = document.getElementById("playerCount");
-        // 1. WYCZYŚĆ LISTĘ (To naprawia błędy dublowania/mieszania)
-        list.innerHTML = "";
         const btn = document.getElementById("startGameBtn");
-        const msg = document.getElementById("waitingMsg");
 
-        players.forEach(function (name) {
-            const li = document.createElement("li");
-            li.textContent = name;
-            li.className = "list-group-item"; // Styl Bootstrapa
-            list.appendChild(li);
-        });
+        list.innerHTML = ""; // Czyścimy listę
 
-        // 3. Zaktualizuj licznik
-        if (countSpan) {
-            countSpan.textContent = players.length;
+        if (players.length === 0) {
+            list.innerHTML = '<li class="list-group-item text-muted fst-italic">Oczekiwanie na graczy...</li>';
+            btn.disabled = true;
+        } else {
+            players.forEach(name => {
+                const li = document.createElement("li");
+                li.className = "list-group-item fw-bold";
+                li.textContent = name;
+                list.appendChild(li);
+            });
+            btn.disabled = false; // Można startować jak jest min. 1 gracz
         }
+
+        countSpan.textContent = players.length;
     });
 
-    // 2. Obsługa błędów z serwera
-    connection.on("ShowError", function (message) {
-        alert("Błąd: " + message);
-        window.location.href = "/Quizzes/Index"; // Wróć do listy quizów w razie błędu
+    // 2. Start Gry (Przekierowanie)
+    connection.on("GameStarted", function () {
+        // Przekierowanie Hosta do ekranu gry
+        window.location.href = "/Game/Play?code=" + code;
     });
 
-    // 3. Połączenie jako HOST
+    // 3. Obsługa błędów
+    connection.on("ShowError", function (msg) {
+        alert(msg);
+    });
+
+    // START POŁĄCZENIA
     connection.start().then(function () {
-        console.log("Połączono jako HOST.");
-        const code = "@ViewBag.Code";
-
-        // Wywołujemy metodę JoinGameHost na serwerze
+        console.log("Connected as Host");
+        // Rejestracja hosta w Hubie
         connection.invoke("JoinGameHost", code).catch(err => console.error(err));
+    }).catch(err => console.error(err));
 
-    }).catch(function (err) {
-        console.error("Błąd połączenia: ", err);
-    });
-
-    // 4. Kliknięcie Start (logika później)
-    document.getElementById("startGameBtn").addEventListener("click", function() {
-        alert("Tu nastąpi przejście do pierwszego pytania! (To zrobimy w następnym kroku)");
-        // connection.invoke("StartGame", "@ViewBag.Code");
+    // Kliknięcie START
+    document.getElementById("startGameBtn").addEventListener("click", function () {
+        connection.invoke("StartGame", code).catch(err => console.error(err));
     });
 </script>
 @{

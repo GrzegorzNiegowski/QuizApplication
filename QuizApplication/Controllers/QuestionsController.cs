@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using QuizApplication.DTOs;
+using QuizApplication.DTOs.QuestionDtos;
 using QuizApplication.Models;
 using QuizApplication.Models.ViewModels;
 using QuizApplication.Services;
@@ -28,7 +29,7 @@ namespace QuizApplication.Controllers
                 return BadRequest("Wymagane jest podanie poprawnego quizId.");
 
             // 1. Pobieramy Quiz (serwis zwraca QuizDto, który zawiera już listę Questions)
-            var quizResult = await _quizService.GetQuizByIdAsync(quizId);
+            var quizResult = await _quizService.GetQuizDetailsAsync(quizId);
 
             if (!quizResult.Success || quizResult.Data == null)
                 return NotFound("Nie znaleziono quizu.");
@@ -45,7 +46,7 @@ namespace QuizApplication.Controllers
             ViewBag.QuizId = quizId;
 
             // 4. Zwracamy samą listę pytań (List<QuestionDto>)
-            var questions = quizResult.Data.Questions.OrderBy(q => q.Id).ToList();
+            var questions = quizResult.Data.Questions.OrderBy(q => q.QuestionId).ToList();
             return View(questions);
         }
 
@@ -53,7 +54,7 @@ namespace QuizApplication.Controllers
         // GET: Questions/Create?quizId=5
         public async Task<IActionResult> Create(int quizId)
         {
-            var result = await _quizService.GetQuizByIdAsync(quizId);
+            var result = await _quizService.GetQuizDetailsAsync(quizId);
             if (!result.Success) return NotFound();
 
             ViewBag.QuizTitle = result.Data!.Title;
@@ -70,17 +71,13 @@ namespace QuizApplication.Controllers
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
             // ViewModel -> DTO
-            var dto = new QuestionDto
+            var dto = new CreateQuestionDto
             {
                 QuizId = vm.QuizId,
                 Content = vm.Content,
                 TimeLimitSeconds = vm.TimeLimitSeconds,
                 Points = vm.Points,
-                Answers = vm.Answers.Select(a => new AnswerDto
-                {
-                    Content = a.Content,
-                    IsCorrect = a.IsCorrect
-                }).ToList()
+                Answers = vm.Answers.Select(a => new CreateAnswerDto { Content = a.Content, IsCorrect = a.IsCorrect }).ToList()
             };
 
             var result = await _questionService.AddQuestionAsync(dto, User.FindFirstValue(ClaimTypes.NameIdentifier)!, User.IsInRole("Admin"));
@@ -89,7 +86,7 @@ namespace QuizApplication.Controllers
             {
                 result.Errors.ForEach(e => ModelState.AddModelError("", e));
                 // Przywróć tytuł quizu
-                var qRes = await _quizService.GetQuizByIdAsync(vm.QuizId);
+                var qRes = await _quizService.GetQuizDetailsAsync(vm.QuizId);
                 if (qRes.Success) ViewBag.QuizTitle = qRes.Data!.Title;
 
                 return View(vm);
@@ -107,7 +104,7 @@ namespace QuizApplication.Controllers
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
             // Pobieramy pytanie przez serwis (metoda przyjmuje userId, by sprawdzić uprawnienia wewnątrz)
-            var result = await _questionService.GetQuestionByIdAsync(id, userId, User.IsInRole("Admin"));
+            var result = await _questionService.GetQuestionForEditAsync(id, userId, User.IsInRole("Admin"));
 
             if (!result.Success)
             {
@@ -126,17 +123,17 @@ namespace QuizApplication.Controllers
         {
             
 
-            var result = await _questionService.GetQuestionByIdAsync(id, User.FindFirstValue(ClaimTypes.NameIdentifier)!, User.IsInRole("Admin"));
+            var result = await _questionService.GetQuestionForEditAsync(id, User.FindFirstValue(ClaimTypes.NameIdentifier)!, User.IsInRole("Admin"));
             if (!result.Success) return NotFound();
 
             var dto = result.Data!;
-            var quizRes = await _quizService.GetQuizByIdAsync(dto.QuizId);
+            var quizRes = await _quizService.GetQuizDetailsAsync(dto.QuizId);
             if (quizRes.Success) ViewBag.QuizTitle = quizRes.Data!.Title;
 
             // DTO -> ViewModel
             var vm = new EditQuestionViewModel
             {
-                QuestionId = dto.Id ?? 0,
+                QuestionId = dto.QuestionId,
                 QuizId = dto.QuizId,
                 Content = dto.Content,
                 TimeLimitSeconds = dto.TimeLimitSeconds,
@@ -159,19 +156,14 @@ namespace QuizApplication.Controllers
         {
             if (!ModelState.IsValid) return View(vm);
 
-            var dto = new QuestionDto
+            var dto = new EditQuestionDto
             {
-                Id = vm.QuestionId,
+                QuestionId = vm.QuestionId,
                 QuizId = vm.QuizId,
                 Content = vm.Content,
                 TimeLimitSeconds = vm.TimeLimitSeconds,
                 Points = vm.Points,
-                Answers = vm.Answers.Select(a => new AnswerDto
-                {
-                    Id = a.Id,
-                    Content = a.Content,
-                    IsCorrect = a.IsCorrect
-                }).ToList()
+                Answers = vm.Answers.Select(a => new EditAnswerDto { Id = a.Id, Content = a.Content, IsCorrect = a.IsCorrect }).ToList()
             };
 
             var result = await _questionService.UpdateQuestionAsync(dto, User.FindFirstValue(ClaimTypes.NameIdentifier)!, User.IsInRole("Admin"));
@@ -181,14 +173,13 @@ namespace QuizApplication.Controllers
                 result.Errors.ForEach(e => ModelState.AddModelError("", e));
                 return View(vm);
             }
-
             return RedirectToAction("Details", "Quizzes", new { id = vm.QuizId });
         }
 
         // GET Delete (confirm)
         public async Task<IActionResult> Delete(int id)
         {
-            var result = await _questionService.GetQuestionByIdAsync(id, User.FindFirstValue(ClaimTypes.NameIdentifier)!, User.IsInRole("Admin"));
+            var result = await _questionService.GetQuestionForEditAsync(id, User.FindFirstValue(ClaimTypes.NameIdentifier)!, User.IsInRole("Admin"));
             if (!result.Success) return NotFound();
 
             // Do widoku "Delete" przekazujemy DTO, bo to tylko odczyt
@@ -203,7 +194,7 @@ namespace QuizApplication.Controllers
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
             // Pobierz ID quizu, żeby wiedzieć gdzie wrócić
-            var qResult = await _questionService.GetQuestionByIdAsync(questionId, userId, User.IsInRole("Admin"));
+            var qResult = await _questionService.GetQuestionForEditAsync(questionId, userId, User.IsInRole("Admin"));
             if (!qResult.Success) return RedirectToAction("Index", "Quizzes");
 
             var result = await _questionService.DeleteQuestionAsync(questionId, userId, User.IsInRole("Admin"));

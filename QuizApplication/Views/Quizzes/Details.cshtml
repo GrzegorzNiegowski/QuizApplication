@@ -1,4 +1,4 @@
-﻿@model QuizApplication.DTOs.QuizDto
+﻿@model QuizApplication.DTOs.QuizDtos.QuizDetailsDto
 @{
     ViewData["Title"] = "Szczegóły quizu";
     // Sprawdzamy uprawnienia do edycji (Właściciel lub Admin)
@@ -26,7 +26,7 @@
             <div class="row">
                 <div class="col-md-6">
                     <p><strong>Kod dostępu:</strong> <span class="badge bg-secondary" style="font-size: 1.1em;">@Model.AccessCode</span></p>
-                    <p><strong>Utworzono:</strong> @Model.CreatedAt.ToString("yyyy-MM-dd HH:mm")</p>
+                    <!--<p><strong>Utworzono:</strong> Model.CreatedAt.ToString("yyyy-MM-dd HH:mm")</p>-->
                 </div>
                 <div class="col-md-6 text-end">
                     <p><strong>Liczba pytań:</strong> @Model.Questions.Count</p>
@@ -56,12 +56,12 @@
     else
     {
         <div class="row">
-            @foreach (var q in Model.Questions.OrderBy(q => q.Id))
+            @foreach (var q in Model.Questions.OrderBy(q => q.QuestionId))
             {
                 <div class="col-12 mb-3">
                     <div class="card h-100">
                         <div class="card-header d-flex justify-content-between align-items-center">
-                            <strong>Pytanie #@q.Id</strong>
+                            <strong>Pytanie #@q.QuestionId</strong>
                             <span>
                                 <span class="badge bg-info text-dark">@q.TimeLimitSeconds s</span>
                                 <span class="badge bg-warning text-dark">@q.Points pkt</span>
@@ -73,7 +73,7 @@
                             {
                                 <p><small>(Zawiera obrazek)</small></p>
                             }
-
+                            
                             <ul class="list-group list-group-flush mt-3 mb-3">
                                 @foreach (var a in q.Answers)
                                 {
@@ -86,14 +86,14 @@
                                     </li>
                                 }
                             </ul>
-
+                            
                             @if (canEdit)
                             {
                                 <div class="d-flex justify-content-end gap-2">
-                                    <a asp-controller="Questions" asp-action="Edit" asp-route-id="@q.Id" class="btn btn-sm btn-outline-primary">
+                                    <a asp-controller="Questions" asp-action="Edit" asp-route-id="@q.QuestionId" class="btn btn-sm btn-outline-primary">
                                         Edytuj (Pytanie i Odpowiedzi)
                                     </a>
-                                    <a asp-controller="Questions" asp-action="Delete" asp-route-id="@q.Id" class="btn btn-sm btn-outline-danger">
+                                    <a asp-controller="Questions" asp-action="Delete" asp-route-id="@q.QuestionId" class="btn btn-sm btn-outline-danger">
                                         Usuń
                                     </a>
                                 </div>
