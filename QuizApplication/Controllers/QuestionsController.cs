@@ -54,6 +54,10 @@ namespace QuizApplication.Controllers
         // GET: Questions/Create?quizId=5
         public async Task<IActionResult> Create(int quizId)
         {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            if (!await _quizService.IsOwnerOrAdminAsync(quizId, userId, User.IsInRole("Admin")))
+                return Forbid();
+
             var result = await _quizService.GetQuizDetailsAsync(quizId);
             if (!result.Success) return NotFound();
 
@@ -77,7 +81,7 @@ namespace QuizApplication.Controllers
                 Content = vm.Content,
                 TimeLimitSeconds = vm.TimeLimitSeconds,
                 Points = vm.Points,
-                Answers = vm.Answers.Select(a => new CreateAnswerDto { Content = a.Content, IsCorrect = a.IsCorrect }).ToList()
+                Answers = vm.Answers.Where(a => !string.IsNullOrWhiteSpace(a.Content)).Select(a => new CreateAnswerDto { Content = a.Content, IsCorrect = a.IsCorrect }).ToList()
             };
 
             var result = await _questionService.AddQuestionAsync(dto, User.FindFirstValue(ClaimTypes.NameIdentifier)!, User.IsInRole("Admin"));
@@ -163,7 +167,7 @@ namespace QuizApplication.Controllers
                 Content = vm.Content,
                 TimeLimitSeconds = vm.TimeLimitSeconds,
                 Points = vm.Points,
-                Answers = vm.Answers.Select(a => new EditAnswerDto { Id = a.Id, Content = a.Content, IsCorrect = a.IsCorrect }).ToList()
+                Answers = vm.Answers.Where(a => !string.IsNullOrWhiteSpace(a.Content)).Select(a => new EditAnswerDto { Id = a.Id, Content = a.Content, IsCorrect = a.IsCorrect }).ToList()
             };
 
             var result = await _questionService.UpdateQuestionAsync(dto, User.FindFirstValue(ClaimTypes.NameIdentifier)!, User.IsInRole("Admin"));

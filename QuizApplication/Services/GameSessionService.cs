@@ -14,6 +14,8 @@ namespace QuizApplication.Services
     {
         // Klucz: AccessCode (np. "ABC12") -> Wartość: Dane sesji
         private readonly ConcurrentDictionary<string, GameSession> _sessions = new();
+        private readonly ConcurrentDictionary<string, string> _connectionToSession = new();
+
 
         public void InitializeSession(StartSessionDto dto, GameQuizDto gameQuiz)
         {
@@ -62,6 +64,8 @@ namespace QuizApplication.Services
                     // ale na razie możemy to pominąć lub mapować w locie.
                 });
 
+                _connectionToSession[connectionId] = code;
+
                 return new JoinSessionResultDto
                 {
                     Success = true,
@@ -79,7 +83,7 @@ namespace QuizApplication.Services
                 lock (session.Players)
                 {
                     var player = session.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
-                    if (player != null) session.Players.Remove(player);
+                    if (player != null) _connectionToSession.TryRemove(connectionId, out _);
                 }
             }
         }
@@ -96,18 +100,10 @@ namespace QuizApplication.Services
             return new List<PlayerScoreDto>();
         }
 
-        public string? GetSessionIdByConnectionId(string connectionId)
-        {
-            foreach (var entry in _sessions)
-            {
-                if (entry.Value.HostConnectionId == connectionId ||
-                    entry.Value.Players.Any(p => p.ConnectionId == connectionId))
-                {
-                    return entry.Key;
-                }
-            }
-            return null;
-        }
+        public string? GetSessionIdByConnectionId(string connectionId) => _connectionToSession.TryGetValue(connectionId, out var accessCode) ? accessCode : null;
+        
+           
+        
 
         public bool IsHost(string connectionId) => _sessions.Values.Any(s => s.HostConnectionId == connectionId);
 
@@ -116,6 +112,7 @@ namespace QuizApplication.Services
             if (_sessions.TryGetValue(sessionCode.ToUpper(), out var session))
             {
                 session.HostConnectionId = connectionId;
+                _connectionToSession[connectionId] = sessionCode.ToUpperInvariant();
             }
         }
 
@@ -134,6 +131,7 @@ namespace QuizApplication.Services
             {
                 s.IsGameStarted = true;
                 s.CurrentQuestionIndex++;
+                s.AnsweredConnectionIds.Clear();
 
                 if (s.QuizData != null && s.CurrentQuestionIndex < s.QuizData.Questions.Count)
                 {
@@ -158,23 +156,45 @@ namespace QuizApplication.Services
             }
             return null; // Koniec gry
         }
-        
 
-        public void SubmitAnswer(string connectionId, SubmitAnswerDto dto)
+
+        public OperationResult SubmitAnswer(string sessionCode, string connectionId, SubmitAnswerDto dto)
         {
-            var code = GetSessionIdByConnectionId(connectionId);
-            if (code == null || !_sessions.TryGetValue(code, out var s)) return;
+            var code = sessionCode.ToUpperInvariant();
+            if (!_sessions.TryGetValue(code, out var s))
+                return OperationResult.Fail("Sesja nie istnieje.");
 
-            // Spr czy gra trwa i index poprawny
-            if (s.CurrentQuestionIndex < 0 || s.QuizData == null || s.CurrentQuestionIndex >= s.QuizData.Questions.Count) return;
+            // czy gra trwa
+            if (!s.IsGameStarted) return OperationResult.Fail("Gra jeszcze się nie rozpoczęła.");
+
+            if (s.CurrentQuestionIndex < 0 || s.QuizData == null || s.CurrentQuestionIndex >= s.QuizData.Questions.Count)
+                return OperationResult.Fail("Brak aktywnego pytania.");
 
             var currentQ = s.QuizData.Questions[s.CurrentQuestionIndex];
+            if (currentQ.Id != dto.QuestionId)
+                return OperationResult.Fail("To pytanie nie jest aktualne.");
 
-            // Walidacja czy gracz odpowiada na bieżące pytanie
-            if (currentQ.Id != dto.QuestionId) return;
+            // czy gracz w sesji
+            lock (s.Players)
+            {
+                if (!s.Players.Any(p => p.ConnectionId == connectionId))
+                    return OperationResult.Fail("Nie jesteś graczem w tej sesji.");
+            }
 
-            var isCorrect = currentQ.Answers.Any(a => a.Id == dto.AnswerId && a.IsCorrect);
-            if (isCorrect)
+            // blokada wielokrotnych odpowiedzi
+            lock (s)
+            {
+                if (s.AnsweredConnectionIds.Contains(connectionId))
+                    return OperationResult.Fail("Już odpowiedziałeś na to pytanie.");
+
+                s.AnsweredConnectionIds.Add(connectionId);
+            }
+            // czy answer należy do pytania
+            var answer = currentQ.Answers.FirstOrDefault(a => a.Id == dto.AnswerId);
+            if (answer == null)
+                return OperationResult.Fail("Nieprawidłowa odpowiedź dla tego pytania.");
+
+            if (answer.IsCorrect)
             {
                 lock (s.Players)
                 {
@@ -182,6 +202,8 @@ namespace QuizApplication.Services
                     if (p != null) p.Score += currentQ.Points;
                 }
             }
+
+            return OperationResult.Ok();
         }
 
         public ScoreboardDto GetLeaderboard(string sessionCode)
@@ -197,6 +219,20 @@ namespace QuizApplication.Services
                 }
             }
             return res;
+        }
+
+        public bool IsHostOfSession(string sessionCode, string connectionId)
+        {
+            sessionCode = sessionCode.ToUpperInvariant();
+            return _sessions.TryGetValue(sessionCode, out var s) && s.HostConnectionId == connectionId;
+        }
+
+        public bool IsPlayerInSession(string sessionCode, string connectionId)
+        {
+            var code = sessionCode.ToUpperInvariant();
+            if (!_sessions.TryGetValue(code, out var s)) return false;
+            lock (s.Players)
+                return s.Players.Any(p => p.ConnectionId == connectionId);
         }
     }
 }

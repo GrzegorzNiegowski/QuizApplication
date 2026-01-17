@@ -1,7 +1,8 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using QuizApplication.Data;
-using QuizApplication.DTOs;
+using QuizApplication.Validation;
 using QuizApplication.DTOs.GameDtos;
+using QuizApplication.DTOs.QuestionDtos;
 using QuizApplication.DTOs.QuizDtos;
 using QuizApplication.Models;
 using QuizApplication.Models.ViewModels;
@@ -20,6 +21,16 @@ namespace QuizApplication.Services
 
         public async Task<OperationResult<QuizDetailsDto>> CreateQuizAsync(CreateQuizDto dto)
         {
+            var errors = DtoValidators.ValidateCreateQuiz(dto);
+            if (errors.Any())
+                return OperationResult<QuizDetailsDto>.Fail(errors.ToArray());
+
+            var ownerId = (dto.OwnerId ?? "").Trim();
+            if (ownerId.Length == 0)
+                return OperationResult<QuizDetailsDto>.Fail("Brak właściciela quizu (OwnerId).");
+
+            var title = dto.Title.Trim();
+
             var quiz = new Quiz
             {
                 Title = dto.Title,
@@ -38,6 +49,7 @@ namespace QuizApplication.Services
         {
             var quiz = await _context.Quizzes
                 .Include(q => q.Questions)
+                .ThenInclude(qu => qu.Answers)
                 .AsNoTracking()
                 .FirstOrDefaultAsync(q => q.Id == id);
 
@@ -49,12 +61,20 @@ namespace QuizApplication.Services
                 Title = quiz.Title,
                 AccessCode = quiz.AccessCode,
                 OwnerId = quiz.OwnerId ?? "",
+                CreatedAt = quiz.CreatedAt,
                 Questions = quiz.Questions.Select(q => new QuestionSummaryDto
                 {
                     QuestionId = q.Id,
                     Content = q.Content,
                     TimeLimitSeconds = q.TimeLimitSeconds,
-                    Points = q.Points
+                    Points = q.Points,
+                    ImageUrl = q.ImageUrl,
+                    Answers = q.Answers.Select(a => new AnswerSummaryDto
+                    {
+                        Id = a.Id,
+                        Content = a.Content,
+                        IsCorrect = a.IsCorrect
+                    }).ToList()
                     
                 }).ToList()
             };
@@ -87,11 +107,15 @@ namespace QuizApplication.Services
 
         public async Task<OperationResult> UpdateQuizTitleAsync(UpdateQuizDto dto, string userId, bool isAdmin)
         {
+            var errors = DtoValidators.ValidateUpdateQuizTitle(dto);
+            if (errors.Any()) return 
+                    OperationResult.Fail(errors.ToArray());
+
             var quiz = await _context.Quizzes.FindAsync(dto.Id);
             if (quiz == null) return OperationResult.Fail("Quiz nie istnieje.");
             if (!isAdmin && quiz.OwnerId != userId) return OperationResult.Fail("Brak uprawnień.");
 
-            quiz.Title = dto.Title;
+            quiz.Title = dto.Title.Trim();
             await _context.SaveChangesAsync();
             return OperationResult.Ok();
         }
@@ -101,6 +125,8 @@ namespace QuizApplication.Services
             var quiz = await _context.Quizzes.FindAsync(quizId);
             if (quiz == null) return OperationResult.Fail("Quiz nie istnieje.");
             if (!isAdmin && quiz.OwnerId != userId) return OperationResult.Fail("Brak uprawnień.");
+            if (quizId <= 0) return OperationResult.Fail("Nieprawidłowy identyfikator quizu.");
+
 
             _context.Quizzes.Remove(quiz);
             await _context.SaveChangesAsync();

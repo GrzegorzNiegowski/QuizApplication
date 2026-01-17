@@ -22,7 +22,7 @@ namespace QuizApplication.Controllers
 
 
         //Wszystkie quizy
-        [AllowAnonymous]
+        
         public async Task<IActionResult> Index()
         {
             if (!User.Identity?.IsAuthenticated ?? true)
@@ -34,7 +34,7 @@ namespace QuizApplication.Controllers
         }
 
         // GET: /Quizzes/Details/5
-        [AllowAnonymous]
+        
         public async Task<IActionResult> Details(int id)
         {
             var result = await _quizService.GetQuizDetailsAsync(id);

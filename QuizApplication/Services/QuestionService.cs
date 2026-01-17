@@ -5,6 +5,7 @@ using QuizApplication.DTOs.QuestionDtos;
 using QuizApplication.Models;
 using QuizApplication.Models.ViewModels;
 using QuizApplication.Utilities;
+using QuizApplication.Validation;
 
 namespace QuizApplication.Services
 {
@@ -21,26 +22,32 @@ namespace QuizApplication.Services
 
         public async Task<OperationResult> AddQuestionAsync(CreateQuestionDto dto, string userId, bool isAdmin)
         {
+            var errors = DtoValidators.ValidateCreateQuestion(dto);
+            if (errors.Any()) return OperationResult.Fail(errors.ToArray());
+
             if (!await _quizService.IsOwnerOrAdminAsync(dto.QuizId, userId, isAdmin))
                 return OperationResult.Fail("Brak uprawnień.");
 
-            // Walidacja
-            if (string.IsNullOrWhiteSpace(dto.Content)) return OperationResult.Fail("Treść jest wymagana.");
-            var validAnswers = dto.Answers.Where(a => !string.IsNullOrWhiteSpace(a.Content)).ToList();
-            if (validAnswers.Count < 1) return OperationResult.Fail("Wymagana min. 1 odpowiedź.");
-            if (!validAnswers.Any(a => a.IsCorrect)) return OperationResult.Fail("Wymagana min. 1 poprawna odpowiedź.");
+            var content = dto.Content.Trim();
+            var validAnswers = dto.Answers
+                .Where(a => !string.IsNullOrWhiteSpace(a.Content))
+                .Select(a => new Answer
+                {
+                    Content = a.Content.Trim(),
+                    IsCorrect = a.IsCorrect
+                })
+                .ToList();
+
+            // (opcjonalnie) max 4 odpowiedzi — jeśli to wymóg biznesowy:
+            // if (validAnswers.Count > 4) return OperationResult.Fail("Maksymalnie 4 odpowiedzi.");
 
             var question = new Question
             {
                 QuizId = dto.QuizId,
-                Content = dto.Content,
+                Content = content,
                 TimeLimitSeconds = dto.TimeLimitSeconds,
                 Points = dto.Points,
-                Answers = validAnswers.Select(a => new Answer
-                {
-                    Content = a.Content,
-                    IsCorrect = a.IsCorrect
-                }).ToList()
+                Answers = validAnswers
             };
 
             _context.Questions.Add(question);
@@ -79,8 +86,18 @@ namespace QuizApplication.Services
 
         public async Task<OperationResult> UpdateQuestionAsync(EditQuestionDto dto, string userId, bool isAdmin)
         {
-            var q = await _context.Questions.Include(x => x.Answers).FirstOrDefaultAsync(x => x.Id == dto.QuestionId);
+            var errors = DtoValidators.ValidateEditQuestion(dto);
+            if (errors.Any()) return OperationResult.Fail(errors.ToArray());
+
+            var q = await _context.Questions
+                .Include(x => x.Answers)
+                .FirstOrDefaultAsync(x => x.Id == dto.QuestionId);
+
             if (q == null) return OperationResult.Fail("Nie znaleziono pytania.");
+
+            // zabezpieczenie przed manipulacją dto.QuizId w request
+            if (q.QuizId != dto.QuizId)
+                return OperationResult.Fail("Niespójny identyfikator quizu dla pytania.");
 
             if (!await _quizService.IsOwnerOrAdminAsync(q.QuizId, userId, isAdmin))
                 return OperationResult.Fail("Brak uprawnień.");
@@ -99,7 +116,6 @@ namespace QuizApplication.Services
                 IsCorrect = a.IsCorrect
             }).ToList();
 
-            if (!newAnswers.Any(a => a.IsCorrect)) return OperationResult.Fail("Brak poprawnej odpowiedzi.");
 
             _context.Answers.AddRange(newAnswers);
             await _context.SaveChangesAsync();
@@ -108,12 +124,18 @@ namespace QuizApplication.Services
 
         public async Task<OperationResult> DeleteQuestionAsync(int questionId, string userId, bool isAdmin)
         {
-            var q = await _context.Questions.FindAsync(questionId);
+            if (questionId <= 0) return OperationResult.Fail("Nieprawidłowy identyfikator pytania.");
+
+            var q = await _context.Questions
+        .Include(x => x.Answers)
+        .FirstOrDefaultAsync(x => x.Id == questionId);
+
             if (q == null) return OperationResult.Fail("Nie znaleziono.");
 
             if (!await _quizService.IsOwnerOrAdminAsync(q.QuizId, userId, isAdmin))
                 return OperationResult.Fail("Brak uprawnień.");
 
+            _context.Answers.RemoveRange(q.Answers);
             _context.Questions.Remove(q);
             await _context.SaveChangesAsync();
             return OperationResult.Ok();

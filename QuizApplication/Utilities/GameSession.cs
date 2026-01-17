@@ -12,5 +12,7 @@ namespace QuizApplication.Utilities
         public GameQuizDto? QuizData { get; set; }
         public bool IsGameStarted { get; set; } = false;
         public int CurrentQuestionIndex { get; set; } = 0;
+        public HashSet<string> AnsweredConnectionIds { get; set; } = new();
+
     }
 }

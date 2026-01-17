@@ -2,6 +2,7 @@
 using QuizApplication.DTOs.GameDtos;
 using QuizApplication.DTOs.RealTimeDtos;
 using QuizApplication.DTOs.SessionDtos;
+using QuizApplication.Utilities;
 using System.Drawing;
 
 namespace QuizApplication.Services
@@ -25,7 +26,10 @@ namespace QuizApplication.Services
 
         // Rozgrywka (Logika)
         QuestionForPlayerDto? NextQuestion(string sessionCode);
-        void SubmitAnswer(string connectionId, SubmitAnswerDto dto);
         ScoreboardDto GetLeaderboard(string sessionCode);
+        bool IsHostOfSession(string sessionCode, string connectionId);
+
+        OperationResult SubmitAnswer(string sessionCode, string connectionId, SubmitAnswerDto dto);
+        bool IsPlayerInSession(string sessionCode, string connectionId);
     }
 }
