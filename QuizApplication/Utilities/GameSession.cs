@@ -13,6 +13,9 @@ namespace QuizApplication.Utilities
         public bool IsGameStarted { get; set; } = false;
         public int CurrentQuestionIndex { get; set; } = 0;
         public HashSet<string> AnsweredConnectionIds { get; set; } = new();
-
+        public DateTimeOffset? CurrentQuestionStartUtc { get; set; }
+        public int CurrentQuestionTimeLimitSeconds { get; set; }
+        public CancellationTokenSource? QuestionCts { get; set; }
+        public object LockObj { get; } = new object();
     }
 }

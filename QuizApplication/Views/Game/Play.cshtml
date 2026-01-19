@@ -1,0 +1,239 @@
+﻿@model QuizApplication.Models.ViewModels.PlayViewModel
+@{
+    ViewData["Title"] = "Gra (Gracz)";
+}
+
+<h2>Gra — Gracz</h2>
+
+<div class="container mt-4">
+    <h2>Gra (Gracz)</h2>
+    <div class="text-muted">Kod: <strong id="code">@Model.AccessCode</strong> | Nick: <strong id="nick">@Model.Nickname</strong></div>
+
+    <hr />
+
+    <div id="waitingArea">
+        <div class="spinner-border" role="status"></div>
+        <span class="ms-2">Czekamy na pytanie...</span>
+    </div>
+
+    <div id="questionArea" style="display:none;">
+        <div class="d-flex justify-content-between align-items-center">
+            <div id="progress" class="text-muted"></div>
+            <div class="text-muted">Timer: <strong><span id="timer">-</span></strong> s</div>
+        </div>
+
+        <h3 id="questionText" class="mt-3"></h3>
+
+        <div id="answers" class="mt-3"></div>
+
+        <div id="answerStatus" class="mt-2 text-muted"></div>
+
+        <!-- opcjonalnie: scoreboard u gracza -->
+        <div class="mt-4">
+            <h5>Wyniki (opcjonalnie)</h5>
+            <ul id="scoreboard"></ul>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="~/lib/microsoft-signalr/signalr.min.js"></script>
+    <script>
+        const code = "@Model.AccessCode";
+        const nick = "@Model.Nickname";
+
+        const connection = new signalR.HubConnectionBuilder()
+          .withUrl("/quizHub")
+          .withAutomaticReconnect()
+          .build();
+
+        // ----- STATE -----
+        let timerInterval = null;
+        let currentQuestionId = null;
+        let hasAnsweredCurrent = false;
+
+        function showError(errors) {
+          alert((errors || []).join("\n"));
+          window.location.href = "/Game/Join";
+        }
+
+        connection.on("ShowError", showError);
+
+        function startTimer(serverStartUtc, limitSec) {
+          if (timerInterval) clearInterval(timerInterval);
+
+          const startMs = Date.parse(serverStartUtc); // ISO string from server
+          timerInterval = setInterval(() => {
+            const elapsed = (Date.now() - startMs) / 1000;
+            const remaining = Math.max(0, Math.ceil(limitSec - elapsed));
+            const timerEl = document.getElementById("timer");
+            if (timerEl) timerEl.innerText = remaining;
+
+            if (remaining <= 0) {
+              clearInterval(timerInterval);
+              timerInterval = null;
+              // po czasie blokujemy przyciski (serwer też blokuje)
+              disableAllAnswerButtons();
+            }
+          }, 200);
+        }
+
+        function disableAllAnswerButtons() {
+          document.querySelectorAll("#answers button[data-answer-id]").forEach(b => b.disabled = true);
+        }
+
+        function renderQuestion(q) {
+          // ujednolicenie pól (C# zwykle PascalCase)
+          const qid = q.questionId ?? q.QuestionId;
+          const content = q.content ?? q.Content ?? "";
+          const answers = q.answers ?? q.Answers ?? [];
+          const serverStartUtc = q.serverStartUtc ?? q.ServerStartUtc;
+          const timeLimit = q.timeLimitSeconds ?? q.TimeLimitSeconds ?? 0;
+          const idx = q.currentQuestionIndex ?? q.CurrentQuestionIndex;
+          const total = q.totalQuestions ?? q.TotalQuestions;
+
+          currentQuestionId = qid;
+          hasAnsweredCurrent = false;
+
+          document.getElementById("waitingArea").style.display = "none";
+          document.getElementById("questionArea").style.display = "block";
+          document.getElementById("answerStatus").innerText = "";
+          document.getElementById("questionText").innerText = content;
+
+          // opcjonalnie pokaż "Pytanie 3/10"
+          const progressEl = document.getElementById("progress");
+          if (progressEl && idx && total) progressEl.innerText = `Pytanie ${idx} / ${total}`;
+
+          // timer
+          if (serverStartUtc) startTimer(serverStartUtc, timeLimit);
+
+          // odpowiedzi
+          const answersDiv = document.getElementById("answers");
+          answersDiv.innerHTML = "";
+
+          answers.forEach(a => {
+            const aid = a.answerId ?? a.AnswerId ?? a.id ?? a.Id;
+            const aText = a.content ?? a.Content ?? "";
+
+            const btn = document.createElement("button");
+            btn.className = "btn btn-outline-primary w-100 mb-2";
+            btn.innerText = aText;
+            btn.dataset.answerId = aid;
+
+            btn.onclick = async () => {
+              if (hasAnsweredCurrent) return; // blokada wielokrotnego kliku
+              hasAnsweredCurrent = true;
+
+              // disable wszystkie
+              disableAllAnswerButtons();
+              btn.classList.remove("btn-outline-primary");
+              btn.classList.add("btn-secondary");
+
+              try {
+                await connection.invoke("SendAnswer", code, { questionId: qid, answerId: aid });
+                document.getElementById("answerStatus").innerText = "Wysłano odpowiedź...";
+              } catch (e) {
+                hasAnsweredCurrent = false;
+                // odblokuj jeśli chcesz (ja zostawiam zablokowane, bo i tak serwer może odrzucić)
+                document.getElementById("answerStatus").innerText = "Błąd wysyłania odpowiedzi.";
+                console.error(e);
+              }
+            };
+
+            answersDiv.appendChild(btn);
+          });
+        }
+
+        // ----- EVENTS -----
+        connection.on("ShowQuestion", (q) => {
+          renderQuestion(q);
+        });
+
+        connection.on("AnswerAccepted", () => {
+          const s = document.getElementById("answerStatus");
+          if (s) s.innerText = "Odpowiedź przyjęta ✅";
+        });
+
+        connection.on("RevealAnswer", (payload) => {
+          const qid = payload.questionId ?? payload.QuestionId;
+          const correctId = payload.correctAnswerId ?? payload.CorrectAnswerId;
+
+          // ignoruj jeśli to nie aktualne pytanie
+          if (currentQuestionId && qid && currentQuestionId !== qid) return;
+
+          // podświetl poprawną i (opcjonalnie) błędną
+          document.querySelectorAll("#answers button[data-answer-id]").forEach(b => {
+            const aid = parseInt(b.dataset.answerId, 10);
+            b.classList.remove("btn-outline-primary", "btn-secondary");
+            if (aid === correctId) b.classList.add("btn-success");
+            else b.classList.add("btn-outline-danger");
+            b.disabled = true;
+          });
+
+          const s = document.getElementById("answerStatus");
+          if (s) s.innerText = "Koniec pytania.";
+        });
+
+        connection.on("ScoreboardUpdate", (scoreboard) => {
+          // opcjonalnie: pokaż topkę
+          const list = document.getElementById("scoreboard");
+          if (!list) return;
+
+          const players = scoreboard.players ?? scoreboard.Players ?? [];
+          list.innerHTML = "";
+          players.forEach(p => {
+            const name = p.playerName ?? p.PlayerName;
+            const score = p.score ?? p.Score;
+            const li = document.createElement("li");
+            li.textContent = `${name}: ${score}`;
+            list.appendChild(li);
+          });
+        });
+
+        // jeśli trzymasz GameOver jako dictionary:
+        connection.on("GameOver", (payload) => {
+          // payload może być dictionary lub ScoreboardDto
+          const list = document.getElementById("scoreboard");
+          if (list) list.innerHTML = "";
+
+          if (payload && (payload.players || payload.Players)) {
+            const players = payload.players ?? payload.Players;
+            players.forEach(p => {
+              const name = p.playerName ?? p.PlayerName;
+              const score = p.score ?? p.Score;
+              const li = document.createElement("li");
+              li.textContent = `${name}: ${score}`;
+              list.appendChild(li);
+            });
+          } else if (payload && typeof payload === "object") {
+            // dictionary nick->score
+            for (const [name, score] of Object.entries(payload)) {
+              const li = document.createElement("li");
+              li.textContent = `${name}: ${score}`;
+              list.appendChild(li);
+            }
+          }
+
+          alert("Koniec gry!");
+        });
+
+        // ----- RECONNECT -----
+        connection.onreconnected(async () => {
+          try {
+            await connection.invoke("JoinGamePlayer", code, nick);
+          } catch (e) {
+            console.error("Rejoin failed", e);
+          }
+        });
+
+        (async () => {
+          try {
+            await connection.start();
+            await connection.invoke("JoinGamePlayer", code, nick);
+          } catch (e) {
+            console.error(e);
+            showError(["Nie udało się połączyć z serwerem gry."]);
+          }
+        })();
+    </script>
+}

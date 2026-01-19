@@ -2,7 +2,7 @@
 
 namespace QuizApplication.Models.ViewModels
 {
-    public class AddQuestionViewModel
+    public class CreateQuestionViewModel
     {
         public int QuizId { get; set; }
 
@@ -20,9 +20,9 @@ namespace QuizApplication.Models.ViewModels
 
         // Lista 4 odpowiedzi. 
         // W kontrolerze zainicjalizujemy ją 4 pustymi obiektami, żeby w widoku były 4 inputy.
-        public List<AnswerViewModel> Answers { get; set; } = new()
+        public List<CreateAnswerViewModel> Answers { get; set; } = new()
         {
-                    new AnswerViewModel(), new AnswerViewModel(), new AnswerViewModel(), new AnswerViewModel()
+                    new CreateAnswerViewModel(), new CreateAnswerViewModel(), new CreateAnswerViewModel(), new CreateAnswerViewModel()
 
         };
 

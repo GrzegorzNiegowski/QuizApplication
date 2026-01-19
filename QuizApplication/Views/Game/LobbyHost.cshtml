@@ -30,6 +30,10 @@
             <button id="startGameBtn" class="btn btn-success btn-lg px-5" disabled>
                 Rozpocznij Grę 🚀
             </button>
+            <div id="hostGameArea" class="mt-4" style="display:none;">
+                <h4>Aktualne pytanie</h4>
+                <div id="hostQuestionBox" class="alert alert-light"></div>
+            </div>
         </div>
     </div>
 </div>
@@ -71,12 +75,13 @@
     // 2. Start Gry (Przekierowanie)
     connection.on("GameStarted", function () {
         // Przekierowanie Hosta do ekranu gry
-        window.location.href = "/Game/Play?code=" + code;
+        window.location.href = "/Game/PlayHost?code=" + encodeURIComponent(code);
+
     });
 
     // 3. Obsługa błędów
-    connection.on("ShowError", function (msg) {
-        alert(msg);
+        connection.on("ShowError", function (errors) {
+        alert((errors || []).join("\n"));
     });
 
     // START POŁĄCZENIA
@@ -89,6 +94,12 @@
     // Kliknięcie START
     document.getElementById("startGameBtn").addEventListener("click", function () {
         connection.invoke("StartGame", code).catch(err => console.error(err));
+    });
+
+        connection.on("ShowQuestion", function (q) {
+        document.getElementById("hostGameArea").style.display = "block";
+        const content = q.content ?? q.Content ?? "";
+        document.getElementById("hostQuestionBox").innerText = content;
     });
 </script>
 @{

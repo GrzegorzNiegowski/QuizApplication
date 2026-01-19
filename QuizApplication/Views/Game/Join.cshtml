@@ -10,12 +10,12 @@
     <h2>Dołącz do Quizu</h2>
     <div class="row justify-content-center">
         <div class="col-md-4">
-            <form id="joinForm">
+            <form asp-action="Join" method="post">
                 <div class="form-group mb-3">
-                    <input type="text" id="accessCode" class="form-control" placeholder="Kod dostępu (np. ABC12)" required />
+                    <input type="text" name="SessionCode" class="form-control" placeholder="Kod dostępu (np. ABC12)" required />
                 </div>
                 <div class="form-group mb-3">
-                    <input type="text" id="nickname" class="form-control" placeholder="Twój nick" required />
+                    <input type="text" name="PlayerName" class="form-control" placeholder="Twój nick" required />
                 </div>
                 <button type="submit" class="btn btn-primary w-100">DOŁĄCZ</button>
             </form>

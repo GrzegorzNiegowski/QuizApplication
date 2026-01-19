@@ -2,7 +2,7 @@
 
 namespace QuizApplication.Models.ViewModels
 {
-    public class AnswerViewModel
+    public class CreateAnswerViewModel
     {
         [Display(Name = "Treść odpowiedzi")]
         [MaxLength(1000)]

@@ -1,7 +1,9 @@
-﻿using QuizApplication.DTOs;
+﻿using Microsoft.AspNetCore.SignalR;
+using QuizApplication.DTOs;
 using QuizApplication.DTOs.GameDtos;
 using QuizApplication.DTOs.RealTimeDtos;
 using QuizApplication.DTOs.SessionDtos;
+using QuizApplication.Hubs;
 using QuizApplication.Models;
 using QuizApplication.Utilities;
 using System.Collections.Concurrent;
@@ -16,10 +18,18 @@ namespace QuizApplication.Services
         private readonly ConcurrentDictionary<string, GameSession> _sessions = new();
         private readonly ConcurrentDictionary<string, string> _connectionToSession = new();
 
+        private readonly IHubContext<QuizHub> _hub;
+
+        public GameSessionService(IHubContext<QuizHub> hub)
+        {
+            _hub = hub;
+        }
+
 
         public void InitializeSession(StartSessionDto dto, GameQuizDto gameQuiz)
         {
-            var code = gameQuiz.AccessCode.ToUpper();
+            var code = (gameQuiz.AccessCode ?? "").Trim().ToUpperInvariant();
+
             if (_sessions.ContainsKey(code)) return;
 
             var session = new GameSession
@@ -83,7 +93,8 @@ namespace QuizApplication.Services
                 lock (session.Players)
                 {
                     var player = session.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
-                    if (player != null) _connectionToSession.TryRemove(connectionId, out _);
+                    if (player != null) session.Players.Remove(player);
+                    _connectionToSession.TryRemove(connectionId, out _);
                 }
             }
         }
@@ -124,6 +135,120 @@ namespace QuizApplication.Services
         }
 
         // --- GAME LOGIC ---
+
+        public async Task<OperationResult> StartGameAutoAsync(string sessionCode)
+        {
+            var code = (sessionCode ?? "").Trim().ToUpperInvariant();
+            if (!_sessions.TryGetValue(code, out var s))
+                return OperationResult.Fail("Sesja nie istnieje.");
+
+            lock (s.LockObj)
+            {
+                if (s.IsGameStarted)
+                    return OperationResult.Fail("Gra już wystartowała.");
+
+                s.IsGameStarted = true;
+                s.CurrentQuestionIndex = -1;
+
+                s.QuestionCts?.Cancel();
+                s.QuestionCts = new CancellationTokenSource();
+            }
+
+            // info do wszystkich
+            await _hub.Clients.Group(code).SendAsync("GameStarted");
+
+            _ = Task.Run(() => RunGameLoopAsync(code, s.QuestionCts!.Token));
+            return OperationResult.Ok();
+        }
+
+        private object BuildRevealPayload(string code, int questionId)
+        {
+            var s = _sessions[code];
+            var q = s.QuizData!.Questions.First(x => x.Id == questionId);
+            var correct = q.Answers.FirstOrDefault(a => a.IsCorrect);
+            return new
+            {
+                QuestionId = questionId,
+                CorrectAnswerId = correct?.Id
+            };
+        }
+
+        private async Task RunGameLoopAsync(string code, CancellationToken ct)
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                QuestionForPlayerDto? qDto;
+                GameQuestionDto? fullQ;
+
+                lock (_sessions[code].LockObj)
+                {
+                    var s = _sessions[code];
+                    s.CurrentQuestionIndex++;
+                    s.AnsweredConnectionIds.Clear();
+
+                    if (s.QuizData == null || s.CurrentQuestionIndex >= s.QuizData.Questions.Count)
+                    {
+                        qDto = null;
+                        fullQ = null;
+                    }
+                    else
+                    {
+                        fullQ = s.QuizData.Questions[s.CurrentQuestionIndex];
+                        s.CurrentQuestionStartUtc = DateTimeOffset.UtcNow;
+                        s.CurrentQuestionTimeLimitSeconds = fullQ.TimeLimitSeconds;
+
+                        qDto = new QuestionForPlayerDto
+                        {
+                            QuestionId = fullQ.Id,
+                            Content = fullQ.Content,
+                            TimeLimitSeconds = fullQ.TimeLimitSeconds,
+                            Points = fullQ.Points,
+                            CurrentQuestionIndex = s.CurrentQuestionIndex + 1,
+                            TotalQuestions = s.QuizData.Questions.Count,
+                            ServerStartUtc = s.CurrentQuestionStartUtc.Value,
+                            Answers = fullQ.Answers.Select(a => new AnswerForPlayerDto
+                            {
+                                AnswerId = a.Id,
+                                Content = a.Content
+                            }).ToList()
+                        };
+                    }
+                }
+
+                if (qDto == null)
+                {
+                    var leaderboard = GetLeaderboard(code);
+                    await _hub.Clients.Group(code).SendAsync("GameOver",
+                        leaderboard.Players.ToDictionary(k => k.PlayerName, v => v.Score));
+                    return;
+                }
+
+                // 1) pokaż pytanie
+                await _hub.Clients.Group(code).SendAsync("ShowQuestion", qDto);
+
+                // 2) czekaj do końca pytania
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(qDto.TimeLimitSeconds), ct);
+                }
+                catch (TaskCanceledException) { return; }
+
+                // 3) reveal + scoreboard (tu minimalnie: wyślij correct answerId + leaderboard)
+                var reveal = BuildRevealPayload(code, qDto.QuestionId);
+                await _hub.Clients.Group(code).SendAsync("RevealAnswer", reveal);
+
+                var lb = GetLeaderboard(code);
+                await _hub.Clients.Group(code).SendAsync("ScoreboardUpdate", lb);
+
+                // 4) przerwa między pytaniami
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(3), ct);
+                }
+                catch (TaskCanceledException) { return; }
+            }
+        }
+
 
         public QuestionForPlayerDto? NextQuestion(string sessionCode)
         {
@@ -180,6 +305,13 @@ namespace QuizApplication.Services
                 if (!s.Players.Any(p => p.ConnectionId == connectionId))
                     return OperationResult.Fail("Nie jesteś graczem w tej sesji.");
             }
+
+            var start = s.CurrentQuestionStartUtc;
+            if (start == null) return OperationResult.Fail("Brak aktywnego pytania.");
+
+            var elapsed = DateTimeOffset.UtcNow - start.Value;
+            if (elapsed.TotalSeconds > s.CurrentQuestionTimeLimitSeconds)
+                return OperationResult.Fail("Czas na odpowiedź minął.");
 
             // blokada wielokrotnych odpowiedzi
             lock (s)

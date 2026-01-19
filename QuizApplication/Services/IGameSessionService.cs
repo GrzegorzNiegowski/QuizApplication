@@ -9,6 +9,8 @@ namespace QuizApplication.Services
 {
     public interface IGameSessionService
     {
+        Task<OperationResult> StartGameAutoAsync(string sessionCode);
+
         // Zarządzanie sesją
         void InitializeSession(StartSessionDto dto, GameQuizDto gameQuiz);
         bool SessionExists(string sessionCode);

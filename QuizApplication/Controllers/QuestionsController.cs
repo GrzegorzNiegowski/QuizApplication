@@ -62,13 +62,13 @@ namespace QuizApplication.Controllers
             if (!result.Success) return NotFound();
 
             ViewBag.QuizTitle = result.Data!.Title;
-            return View(new AddQuestionViewModel { QuizId = quizId });
+            return View(new CreateQuestionViewModel { QuizId = quizId });
         }
 
         // POST Create — (niezmienione)
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> Create(AddQuestionViewModel vm)
+        public async Task<IActionResult> Create(CreateQuestionViewModel vm)
         {
             if (!ModelState.IsValid) return View(vm);
 

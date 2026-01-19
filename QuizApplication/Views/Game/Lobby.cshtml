@@ -19,6 +19,11 @@
     <h4>Gracze w pokoju:</h4>
     <ul id="playersList" class="list-group list-group-flush mx-auto" style="max-width: 400px;">
     </ul>
+
+    <div id="gameArea" style="display:none;" class="mt-4">
+        <h3>Gra rozpoczęta!</h3>
+        <div id="questionBox"></div>
+    </div>
 </div>
 
 <script>
@@ -42,14 +47,30 @@
     });
 
     connection.on("GameStarted", function () {
-        // Przekierowanie Gracza do ekranu gry
-        // Kodujemy nick, żeby nie zgubić polskich znaków w URL
+        document.querySelector(".spinner-border").style.display = "none";
+        document.querySelector("p.text-muted").innerText = "Gra rozpoczęta!";
+        document.getElementById("gameArea").style.display = "block";
         window.location.href = `/Game/Play?code=${code}&nick=${encodeURIComponent(nick)}`;
     });
 
-    connection.on("ShowError", function (msg) {
-        alert(msg);
-        window.location.href = "/Game/Join";
+        connection.on("ShowError", (errors) => alert((errors || []).join("\n")));
+
+
+        connection.on("ShowQuestion", function (q) {
+        document.getElementById("gameArea").style.display = "block";
+        const box = document.getElementById("questionBox");
+
+        const content = q.content ?? q.Content ?? "";
+        box.innerHTML = `<h4>${content}</h4>`;
+
+        const answers = q.answers ?? q.Answers ?? [];
+        answers.forEach(a => {
+            const btn = document.createElement("button");
+            btn.className = "btn btn-outline-primary w-100 mb-2";
+            btn.textContent = a.content ?? a.Content ?? "";
+            btn.onclick = () => connection.invoke("SendAnswer", code, { questionId: q.id ?? q.Id, answerId: a.id ?? a.Id });
+            box.appendChild(btn);
+        });
     });
 
     connection.start().then(function () {

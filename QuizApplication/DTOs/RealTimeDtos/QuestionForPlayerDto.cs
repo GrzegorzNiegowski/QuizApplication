@@ -9,5 +9,7 @@
         public int CurrentQuestionIndex { get; set; } // np. Pytanie 1 z 10
         public int TotalQuestions { get; set; }
         public List<AnswerForPlayerDto> Answers { get; set; } = new();
+
+        public DateTimeOffset ServerStartUtc { get; set; }
     }
 }

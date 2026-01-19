@@ -1,0 +1,120 @@
+﻿@model QuizApplication.Models.ViewModels.PlayHostViewModel
+@{
+    ViewData["Title"] = "Gra (Host)";
+}
+
+<div class="container mt-4">
+    <h2>Gra (Host)</h2>
+    <div class="text-muted">Kod: <strong id="code">@Model.AccessCode</strong></div>
+
+    <hr />
+
+    <div id="waitingArea">
+        <div class="spinner-border" role="status"></div>
+        <span class="ms-2">Oczekiwanie na pytanie...</span>
+    </div>
+
+    <div id="questionArea" style="display:none;">
+        <div class="d-flex justify-content-between align-items-center">
+            <div class="text-muted">Timer: <strong><span id="timer">-</span></strong> s</div>
+        </div>
+
+        <h3 id="questionText" class="mt-3"></h3>
+
+        <div id="reveal" class="mt-2 text-muted"></div>
+
+        <div class="mt-4">
+            <h5>Wyniki</h5>
+            <ul id="scoreboard"></ul>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="~/lib/microsoft-signalr/signalr.min.js"></script>
+    <script>
+        const code = "@Model.AccessCode";
+
+        const connection = new signalR.HubConnectionBuilder()
+          .withUrl("/quizHub")
+          .withAutomaticReconnect()
+          .build();
+
+        let timerInterval = null;
+
+        function startTimer(serverStartUtc, limitSec) {
+          if (timerInterval) clearInterval(timerInterval);
+
+          const startMs = Date.parse(serverStartUtc);
+          timerInterval = setInterval(() => {
+            const elapsed = (Date.now() - startMs) / 1000;
+            const remaining = Math.max(0, Math.ceil(limitSec - elapsed));
+            const timerEl = document.getElementById("timer");
+            if (timerEl) timerEl.innerText = remaining;
+
+            if (remaining <= 0) {
+              clearInterval(timerInterval);
+              timerInterval = null;
+            }
+          }, 200);
+        }
+
+        connection.on("ShowError", (errors) => alert((errors || []).join("\n")));
+
+        connection.on("ShowQuestion", (q) => {
+          document.getElementById("waitingArea").style.display = "none";
+          document.getElementById("questionArea").style.display = "block";
+
+          const content = q.content ?? q.Content ?? "";
+          document.getElementById("questionText").innerText = content;
+
+          const serverStartUtc = q.serverStartUtc ?? q.ServerStartUtc;
+          const timeLimit = q.timeLimitSeconds ?? q.TimeLimitSeconds ?? 0;
+          if (serverStartUtc) startTimer(serverStartUtc, timeLimit);
+        });
+
+        connection.on("RevealAnswer", (payload) => {
+          // host może wyświetlić correctAnswerId albo np. tekst
+          const correctId = payload.correctAnswerId ?? payload.CorrectAnswerId;
+          const el = document.getElementById("reveal");
+          if (el) el.innerText = `Poprawna odpowiedź ID: ${correctId ?? "-"}`;
+        });
+
+        connection.on("ScoreboardUpdate", (scoreboard) => {
+          const list = document.getElementById("scoreboard");
+          if (!list) return;
+
+          const players = scoreboard.players ?? scoreboard.Players ?? [];
+          list.innerHTML = "";
+          players.forEach(p => {
+            const name = p.playerName ?? p.PlayerName;
+            const score = p.score ?? p.Score;
+            const li = document.createElement("li");
+            li.textContent = `${name}: ${score}`;
+            list.appendChild(li);
+          });
+        });
+
+        connection.on("GameOver", (payload) => {
+          alert("Koniec gry!");
+        });
+
+        connection.onreconnected(async () => {
+          try {
+            await connection.invoke("JoinGameHost", code);
+          } catch (e) {
+            console.error("Host rejoin failed", e);
+          }
+        });
+
+        (async () => {
+          try {
+            await connection.start();
+            await connection.invoke("JoinGameHost", code);
+          } catch (e) {
+            console.error(e);
+            alert("Nie udało się połączyć jako host.");
+          }
+        })();
+    </script>
+}
