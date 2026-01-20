@@ -1,45 +1,49 @@
-﻿@*
-    For more information on enabling MVC for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
-*@
-
-@{
+﻿@{
     ViewData["Title"] = "Dołącz do gry";
 }
-
 <div class="text-center mt-5">
     <h2>Dołącz do Quizu</h2>
     <div class="row justify-content-center">
         <div class="col-md-4">
-            <form asp-action="Join" method="post">
+            @if (ViewBag.Error != null)
+            {
+                <div class="alert alert-danger">
+                    @ViewBag.Error
+                </div>
+            }
+            @if (TempData["Error"] != null)
+            {
+                <div class="alert alert-danger">
+                    @TempData["Error"]
+                </div>
+            }
+            <form id="joinForm">
                 <div class="form-group mb-3">
-                    <input type="text" name="SessionCode" class="form-control" placeholder="Kod dostępu (np. ABC12)" required />
+                    <input type="text" id="accessCode" name="SessionCode" class="form-control"
+                           placeholder="Kod dostępu (np. ABC12)" required maxlength="12" />
                 </div>
                 <div class="form-group mb-3">
-                    <input type="text" name="PlayerName" class="form-control" placeholder="Twój nick" required />
+                    <input type="text" id="nickname" name="PlayerName" class="form-control"
+                           placeholder="Twój nick" required maxlength="20" />
                 </div>
                 <button type="submit" class="btn btn-primary w-100">DOŁĄCZ</button>
             </form>
         </div>
     </div>
 </div>
-
-@if(ViewBag.Error !=null)
-{
-    <div class="alert alert-danger">
-        @ViewBag.Error
-    </div>
-}
-
-<script>
-    document.getElementById("joinForm").addEventListener("submit", function(e) {
+@section Scripts {
+    <script>
+        document.getElementById("joinForm").addEventListener("submit", function (e) {
         e.preventDefault();
-        var code = document.getElementById("accessCode").value;
-        var nick = document.getElementById("nickname").value;
-        // Przekierowanie do Lobby z parametrami
-        window.location.href = `/Game/Lobby?code=${code}&nick=${nick}`;
-    });
-</script>
+                const code = document.getElementById("accessCode").value.trim();
+                const nick = document.getElementById("nickname").value.trim();
 
+                if (!code || !nick) {
+                    alert("Wypełnij wszystkie pola");
+                    return;
+                }
 
-@{
+                window.location.href = `/Game/Lobby?code=${encodeURIComponent(code)}&nick=${encodeURIComponent(nick)}`;
+            });
+    </script>
 }

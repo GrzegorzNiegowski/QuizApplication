@@ -3,6 +3,7 @@ using QuizApplication.DTOs.RealTimeDtos;
 using QuizApplication.DTOs.SessionDtos;
 using QuizApplication.Models;
 using QuizApplication.Services;
+using QuizApplication.Utilities;
 using QuizApplication.Validation;
 namespace QuizApplication.Hubs
 {
@@ -18,27 +19,32 @@ namespace QuizApplication.Hubs
             _logger = logger;
         }
 
-        //Metoda dla Hosta
-        public async Task JoinGameHost(string accesCode)
+        #region Host Methods
+
+        public async Task JoinGameHost(string accessCode)
         {
-            var code = NormCode(accesCode);
-            if(string.IsNullOrWhiteSpace(code))
+            var code = SessionCodeHelper.Normalize(accessCode);
+
+            if (!SessionCodeHelper.IsValid(code))
             {
-                await SendErrors("Kod gry jest wymagany");
+                await SendErrors("Nieprawidłowy kod gry");
                 return;
             }
 
-            if(!_sessionService.SessionExists(code))
+            if (!_sessionService.SessionExists(code))
             {
                 await SendErrors("Sesja o podanym kodzie nie istnieje.");
                 return;
             }
 
-            //Przypoisanie ConnectionId hosta do sesji
+            // Przypoisanie ConnectionId hosta do sesji
             _sessionService.SetHostConnectionId(code, Context.ConnectionId);
 
-            //Dodaj do grupy SignalR
+            // Dodaj do grupy SignalR
             await Groups.AddToGroupAsync(Context.ConnectionId, code);
+
+            _logger.LogInformation("Host joined session {Code} with connection {ConnectionId}",
+                code, Context.ConnectionId);
 
             // Wyślij hostowi aktualną listę graczy (jeśli jacyś już czekają)
             var players = _sessionService.GetPlayersInSession(code);
@@ -47,10 +53,11 @@ namespace QuizApplication.Hubs
 
         public async Task StartGame(string accessCode)
         {
-            var code = NormCode(accessCode);
-            if (string.IsNullOrWhiteSpace(code))
+            var code = SessionCodeHelper.Normalize(accessCode);
+
+            if (!SessionCodeHelper.IsValid(code))
             {
-                await SendErrors("Kod gry jest wymagany.");
+                await SendErrors("Nieprawidłowy kod gry.");
                 return;
             }
 
@@ -66,29 +73,27 @@ namespace QuizApplication.Hubs
                 return;
             }
 
-            var res = await _sessionService.StartGameAutoAsync(code);
-            if (!res.Success)
+            _logger.LogInformation("Host starting game for session {Code}", code);
+
+            var result = await _sessionService.StartGameAutoAsync(code, Context.ConnectionId);
+
+            if (!result.Success)
             {
-                await SendErrors(res.Errors);
-                return;
-            }
-            if (res != null)
-            {
-                await Clients.Group(code).SendAsync("GameStarted");
-            }
-            else
-            {
-                await SendErrors("Brak pytań w quizie.");
+                await SendErrors(result.Errors);
             }
         }
 
+        #endregion
 
-        
+        #region Player Methods
 
-        // Metoda wywoływana przez KLIENTA (JS): joinGamePlayer("KOD123", "Marek")
         public async Task JoinGamePlayer(string accessCode, string nickname)
         {
-            var dto = new JoinSessionDto { SessionCode = accessCode, PlayerName = nickname };
+            var dto = new JoinSessionDto
+            {
+                SessionCode = accessCode,
+                PlayerName = nickname
+            };
 
             var errors = DtoValidators.ValidateJoinSession(dto);
             if (errors.Any())
@@ -96,6 +101,7 @@ namespace QuizApplication.Hubs
                 await SendErrors(errors);
                 return;
             }
+
             var code = dto.SessionCode;
             var nick = dto.PlayerName;
 
@@ -113,17 +119,25 @@ namespace QuizApplication.Hubs
                 return;
             }
 
-            _logger.LogInformation("Gracz {nick} dołącza do sesji {code}", nick, code);
+            _logger.LogInformation("Player {Nick} joined session {Code}", nick, code);
 
             await Groups.AddToGroupAsync(Context.ConnectionId, result.SessionCode);
-            var players = _sessionService.GetPlayersInSession(result.SessionCode);
-            await Clients.Group(result.SessionCode).SendAsync("UpdatePlayerList", players.Select(p => p.PlayerName).ToList());
-        }
 
+            var players = _sessionService.GetPlayersInSession(result.SessionCode);
+            await Clients.Group(result.SessionCode).SendAsync("UpdatePlayerList",
+                players.Select(p => p.PlayerName).ToList());
+        }
 
         public async Task ReconnectPlayer(string accessCode, Guid participantId)
         {
-            var code = NormCode(accessCode);
+            var code = SessionCodeHelper.Normalize(accessCode);
+
+            if (!SessionCodeHelper.IsValid(code))
+            {
+                await SendErrors("Nieprawidłowy kod sesji");
+                return;
+            }
+
             if (!_sessionService.SessionExists(code))
             {
                 await SendErrors("Sesja nie istnieje");
@@ -131,19 +145,28 @@ namespace QuizApplication.Hubs
             }
 
             var updated = _sessionService.UpdatePlayerConnection(code, participantId, Context.ConnectionId);
+
             if (updated)
             {
                 await Groups.AddToGroupAsync(Context.ConnectionId, code);
                 await Clients.Caller.SendAsync("ReconnectSuccess");
+
+                _logger.LogInformation("Player {ParticipantId} reconnected to session {Code}",
+                    participantId, code);
+            }
+            else
+            {
+                await SendErrors("Nie udało się ponownie połączyć. Gracz nie znaleziony w sesji.");
             }
         }
 
         public async Task SendAnswer(string accessCode, SubmitAnswerDto dto)
         {
-            var code = NormCode(accessCode);
-            if (string.IsNullOrWhiteSpace(code))
+            var code = SessionCodeHelper.Normalize(accessCode);
+
+            if (!SessionCodeHelper.IsValid(code))
             {
-                await SendErrors("Kod gry jest wymagany.");
+                await SendErrors("Nieprawidłowy kod gry.");
                 return;
             }
 
@@ -160,7 +183,7 @@ namespace QuizApplication.Hubs
                 return;
             }
 
-            // domenowo: host nie odpowiada
+            // Host nie może odpowiadać
             if (_sessionService.IsHostOfSession(code, Context.ConnectionId))
             {
                 await SendErrors("Host nie może wysyłać odpowiedzi.");
@@ -168,6 +191,7 @@ namespace QuizApplication.Hubs
             }
 
             var res = _sessionService.SubmitAnswer(code, Context.ConnectionId, dto);
+
             if (!res.Success)
             {
                 await SendErrors(res.Errors);
@@ -175,45 +199,56 @@ namespace QuizApplication.Hubs
             }
 
             await Clients.Caller.SendAsync("AnswerAccepted");
+
+            _logger.LogDebug("Answer submitted for question {QuestionId} in session {Code}",
+                dto.QuestionId, code);
         }
 
-        // Metoda systemowa: wywoływana, gdy ktoś zamknie przeglądarkę
+        #endregion
+
+        #region Connection Lifecycle
+
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             var connectionId = Context.ConnectionId;
             var accessCode = _sessionService.GetSessionIdByConnectionId(connectionId);
-            var code = NormCode(accessCode);
-            
 
             if (!string.IsNullOrEmpty(accessCode))
             {
+                var code = SessionCodeHelper.Normalize(accessCode);
                 bool isHost = _sessionService.IsHostOfSession(code, connectionId);
 
                 if (isHost)
                 {
-                    await SendErrors("Host zakończył grę");
+                    _logger.LogWarning("Host disconnected from session {Code}", code);
+                    await Clients.Group(code).SendAsync("ShowError",
+                        new[] { "Host zakończył grę." });
                 }
                 else
                 {
                     _sessionService.RemovePlayer(connectionId);
                     var players = _sessionService.GetPlayersInSession(code);
-                    await Clients.Group(code).SendAsync("UpdatePlayerList", players.Select(p => p.PlayerName).ToList());
+                    await Clients.Group(code).SendAsync("UpdatePlayerList",
+                        players.Select(p => p.PlayerName).ToList());
+
+                    _logger.LogInformation("Player disconnected from session {Code}", code);
                 }
             }
+
             await base.OnDisconnectedAsync(exception);
         }
 
+        #endregion
 
-        //helpoery
-
-        private static string NormCode(string? accessCode) => (accessCode ?? "").Trim().ToUpperInvariant();
-        private static string NormNick(string nickName) => (nickName ?? "").Trim();
+        #region Helpers
 
         private Task SendErrors(params string[] errors)
-    => Clients.Caller.SendAsync("ShowError", errors);
+            => Clients.Caller.SendAsync("ShowError", errors);
 
         private Task SendErrors(IEnumerable<string> errors)
             => Clients.Caller.SendAsync("ShowError", errors.ToArray());
+
+        #endregion
 
     }
 }

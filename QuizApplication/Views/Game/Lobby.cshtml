@@ -1,12 +1,6 @@
-﻿@*
-    For more information on enabling MVC for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
-*@
-
-@{
+﻿@{
     ViewData["Title"] = "Poczekalnia";
 }
-<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
-
 <div class="text-center mt-5">
     <h1 class="display-4">Kod gry: <span class="text-primary">@ViewBag.Code</span></h1>
     <h3>Witaj, <strong>@ViewBag.Nick</strong>!</h3>
@@ -14,69 +8,16 @@
         <span class="visually-hidden">Loading...</span>
     </div>
     <p class="mt-3 text-muted">Czekamy na rozpoczęcie gry przez gospodarza...</p>
-
     <hr />
+
     <h4>Gracze w pokoju:</h4>
-    <ul id="playersList" class="list-group list-group-flush mx-auto" style="max-width: 400px;">
-    </ul>
-
-    <div id="gameArea" style="display:none;" class="mt-4">
-        <h3>Gra rozpoczęta!</h3>
-        <div id="questionBox"></div>
-    </div>
+    <ul id="playersList" class="list-group list-group-flush mx-auto" style="max-width: 400px;"></ul>
 </div>
-
-<script>
-    const connection = new signalR.HubConnectionBuilder()
-        .withUrl("/quizHub")
-        .withAutomaticReconnect()
-        .build();
-
-    const code = "@ViewBag.Code";
-    const nick = "@ViewBag.Nick";
-
-    connection.on("UpdatePlayerList", function (players) {
-        const list = document.getElementById("playersList");
-        list.innerHTML = "";
-        players.forEach(p => {
-            const li = document.createElement("li");
-            li.className = "list-group-item" + (p === nick ? " list-group-item-primary" : "");
-            li.textContent = p + (p === nick ? " (Ty)" : "");
-            list.appendChild(li);
-        });
-    });
-
-    connection.on("GameStarted", function () {
-        document.querySelector(".spinner-border").style.display = "none";
-        document.querySelector("p.text-muted").innerText = "Gra rozpoczęta!";
-        document.getElementById("gameArea").style.display = "block";
-        window.location.href = `/Game/Play?code=${code}&nick=${encodeURIComponent(nick)}`;
-    });
-
-        connection.on("ShowError", (errors) => alert((errors || []).join("\n")));
-
-
-        connection.on("ShowQuestion", function (q) {
-        document.getElementById("gameArea").style.display = "block";
-        const box = document.getElementById("questionBox");
-
-        const content = q.content ?? q.Content ?? "";
-        box.innerHTML = `<h4>${content}</h4>`;
-
-        const answers = q.answers ?? q.Answers ?? [];
-        answers.forEach(a => {
-            const btn = document.createElement("button");
-            btn.className = "btn btn-outline-primary w-100 mb-2";
-            btn.textContent = a.content ?? a.Content ?? "";
-            btn.onclick = () => connection.invoke("SendAnswer", code, { questionId: q.id ?? q.Id, answerId: a.id ?? a.Id });
-            box.appendChild(btn);
-        });
-    });
-
-    connection.start().then(function () {
-        connection.invoke("JoinGamePlayer", code, nick).catch(err => console.error(err));
-    }).catch(err => console.error(err));
-</script>
-
-@{
+@section Scripts {
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
+    <script src="~/js/quiz-game.js"></script>
+    <script>
+        const client = new QuizGameClient("@ViewBag.Code", "@ViewBag.Nick", false);
+        client.connect();
+    </script>
 }

@@ -1,13 +1,6 @@
-﻿@*
-    For more information on enabling MVC for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
-*@
-
-@{
+﻿@{
     ViewData["Title"] = "Panel Hosta";
 }
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
-
 <div class="container text-center mt-5">
     <div class="card shadow-sm">
         <div class="card-body">
@@ -16,13 +9,12 @@
                 @ViewBag.AccessCode
             </h1>
             <p class="mb-4">Poproś graczy, aby weszli w zakładkę "Dołącz" i wpisali ten kod.</p>
-
             <hr />
 
             <h4 class="mb-3">Dołączyli gracze (<span id="playerCount">0</span>):</h4>
 
             <ul class="list-group list-group-flush mx-auto" style="max-width: 500px;" id="playersList">
-                <li class="list-group-item text-muted fst-italic" id="waitingMsg">Oczekiwanie na graczy...</li>
+                <li class="list-group-item text-muted fst-italic">Oczekiwanie na graczy...</li>
             </ul>
 
             <hr class="mt-4" />
@@ -30,77 +22,29 @@
             <button id="startGameBtn" class="btn btn-success btn-lg px-5" disabled>
                 Rozpocznij Grę 🚀
             </button>
-            <div id="hostGameArea" class="mt-4" style="display:none;">
-                <h4>Aktualne pytanie</h4>
-                <div id="hostQuestionBox" class="alert alert-light"></div>
-            </div>
         </div>
     </div>
 </div>
+@section Scripts {
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
+    <script src="~/js/quiz-game.js"></script>
+    <script>
+        const code = "@ViewBag.AccessCode";
+        const client = new QuizGameClient(code, "", true);
+        client.connect();
+            // Obsługa przycisku start
+            document.getElementById("startGameBtn").addEventListener("click", async function () {
+                this.disabled = true;
+                this.innerText = "Rozpoczynanie...";
 
-<script>
-    const connection = new signalR.HubConnectionBuilder()
-        .withUrl("/quizHub")
-        .withAutomaticReconnect()
-        .build();
-
-    const code = "@ViewBag.AccessCode";
-
-    // 1. Aktualizacja listy graczy
-    connection.on("UpdatePlayerList", function (players) {
-        console.log("Otrzymano listę graczy:", players);
-
-        const list = document.getElementById("playersList");
-        const countSpan = document.getElementById("playerCount");
-        const btn = document.getElementById("startGameBtn");
-
-        list.innerHTML = ""; // Czyścimy listę
-
-        if (players.length === 0) {
-            list.innerHTML = '<li class="list-group-item text-muted fst-italic">Oczekiwanie na graczy...</li>';
-            btn.disabled = true;
-        } else {
-            players.forEach(name => {
-                const li = document.createElement("li");
-                li.className = "list-group-item fw-bold";
-                li.textContent = name;
-                list.appendChild(li);
+                try {
+                    await client.connection.invoke("StartGame", code);
+                } catch (err) {
+                    console.error("Error starting game:", err);
+                    this.disabled = false;
+                    this.innerText = "Rozpocznij Grę 🚀";
+                    alert("Nie udało się rozpocząć gry: " + err);
+                }
             });
-            btn.disabled = false; // Można startować jak jest min. 1 gracz
-        }
-
-        countSpan.textContent = players.length;
-    });
-
-    // 2. Start Gry (Przekierowanie)
-    connection.on("GameStarted", function () {
-        // Przekierowanie Hosta do ekranu gry
-        window.location.href = "/Game/PlayHost?code=" + encodeURIComponent(code);
-
-    });
-
-    // 3. Obsługa błędów
-        connection.on("ShowError", function (errors) {
-        alert((errors || []).join("\n"));
-    });
-
-    // START POŁĄCZENIA
-    connection.start().then(function () {
-        console.log("Connected as Host");
-        // Rejestracja hosta w Hubie
-        connection.invoke("JoinGameHost", code).catch(err => console.error(err));
-    }).catch(err => console.error(err));
-
-    // Kliknięcie START
-    document.getElementById("startGameBtn").addEventListener("click", function () {
-        connection.invoke("StartGame", code).catch(err => console.error(err));
-    });
-
-        connection.on("ShowQuestion", function (q) {
-        document.getElementById("hostGameArea").style.display = "block";
-        const content = q.content ?? q.Content ?? "";
-        document.getElementById("hostQuestionBox").innerText = content;
-    });
-</script>
-@{
+    </script>
 }
