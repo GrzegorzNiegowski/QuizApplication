@@ -31,8 +31,8 @@ builder.Services.AddSignalR(options =>
     options.MaximumReceiveMessageSize = GameConstants.SignalRMaxMessageSizeBytes;
     options.StreamBufferCapacity = GameConstants.SignalRStreamBufferCapacity;
     options.EnableDetailedErrors = builder.Environment.IsDevelopment();
-    options.ClientTimeoutInterval = TimeSpan.FromSeconds(60);
-    options.KeepAliveInterval = TimeSpan.FromSeconds(30);
+    options.ClientTimeoutInterval = TimeSpan.FromSeconds(120);
+    options.KeepAliveInterval = TimeSpan.FromSeconds(15);
 });
 // Logging
 builder.Logging.ClearProviders();

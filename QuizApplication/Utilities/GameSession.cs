@@ -5,7 +5,7 @@ namespace QuizApplication.Utilities
     public class GameSession
     {
         // Klasa wewnętrzna trzymająca stan jednej gry
-        public int QuizId {  get; set; }
+        public int QuizId { get; set; }
         public string? HostUserId { get; set; } // ASP.NET Identity UserId
         public string HostConnectionId { get; set; } = string.Empty; // ID połączenia Hosta
         public List<Player> Players { get; set; } = new();
@@ -19,18 +19,37 @@ namespace QuizApplication.Utilities
         public CancellationTokenSource? QuestionCts { get; set; }
         public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
         public DateTimeOffset LastActivity { get; set; } = DateTimeOffset.UtcNow;
+
+        // Liczba graczy którzy muszą odpowiedzieć na aktualne pytanie
+        public int ActivePlayersCount { get; set; } = 0;
+
+        // TaskCompletionSource do wcześniejszego zakończenia pytania gdy wszyscy odpowiedzą
+        public TaskCompletionSource<bool>? AllAnsweredTcs { get; set; }
+
         // Lock objects dla różnych operacji
         public object LockObj { get; } = new object();
         private readonly object _answersLock = new object();
 
         /// <summary>
         /// Thread-safe dodawanie odpowiedzi gracza
+        /// Zwraca true jeśli odpowiedź została zapisana, false jeśli już odpowiedział
         /// </summary>
         public bool TryRecordAnswer(string connectionId)
         {
             lock (_answersLock)
             {
-                return AnsweredConnectionIds.Add(connectionId);
+                if (!AnsweredConnectionIds.Add(connectionId))
+                {
+                    return false;
+                }
+
+                // Sprawdź czy wszyscy odpowiedzieli
+                if (AnsweredConnectionIds.Count >= ActivePlayersCount && AllAnsweredTcs != null)
+                {
+                    AllAnsweredTcs.TrySetResult(true);
+                }
+
+                return true;
             }
         }
 

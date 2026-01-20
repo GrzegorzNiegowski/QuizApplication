@@ -31,6 +31,11 @@ class QuizGameClient {
             })
             .configureLogging(signalR.LogLevel.Information)
             .build();
+
+        // Ustaw timeout na kliencie (musi być > niż KeepAliveInterval serwera)
+        this.connection.serverTimeoutInMilliseconds = 120000; // 120 sekund
+        this.connection.keepAliveIntervalInMilliseconds = 15000; // 15 sekund
+
         this.setupEventHandlers();
         this.setupConnectionHandlers();
         try {
@@ -69,11 +74,11 @@ class QuizGameClient {
     setupConnectionHandlers() {
         this.connection.onreconnecting(error => {
             console.warn("Connection lost, reconnecting...", error);
-            this.showToast("Próba ponownego połączenia...", "warning");
+            //this.showToast("Próba ponownego połączenia...", "warning");
         });
         this.connection.onreconnected(async connectionId => {
             console.log("Reconnected with ID:", connectionId);
-            this.showToast("Połączono ponownie", "success");
+            //this.showToast("Połączono ponownie", "success");
             // Rejoin do gry
             try {
                 if (this.isHost) {
@@ -118,7 +123,7 @@ class QuizGameClient {
         // Wyświetl progress
         const progress = document.getElementById("progress");
         if (progress && currentIndex && totalQuestions) {
-            progress.innerText = Pytanie ${ currentIndex } / ${totalQuestions};
+            progress.innerText = `Pytanie ${currentIndex} / ${totalQuestions}`;
         }
         // Wyczyść status
         const answerStatus = document.getElementById("answerStatus");
@@ -166,7 +171,7 @@ class QuizGameClient {
         this.hasAnswered = true;
         this.disableAllAnswerButtons();
         // Podświetl wybraną odpowiedź
-        const btn = document.querySelector(button[data - answer - id= "${answerId}"]);
+        const btn = document.querySelector(`button[data-answer-id="${answerId}"]`);
         if (btn) {
             btn.classList.remove("btn-outline-primary");
             btn.classList.add("btn-secondary");
@@ -226,7 +231,7 @@ class QuizGameClient {
         // Dla hosta - pokaż w reveal
         const reveal = document.getElementById("reveal");
         if (reveal && this.isHost) {
-            reveal.innerText = Poprawna odpowiedź ID: ${ correctId ?? "-" };
+            reveal.innerText = `Poprawna odpowiedź ID: ${correctId ?? "-"}`;
         }
     }
 
@@ -453,3 +458,4 @@ class QuizGameClient {
         const text = Array.isArray(messages) ? messages.join("\n") : String(messages);
         this.showToast(text, "danger");
     }
+}

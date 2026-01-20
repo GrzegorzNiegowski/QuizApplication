@@ -111,6 +111,12 @@ namespace QuizApplication.Services
                 return new JoinSessionResultDto { Success = false, Error = "Sesja nie istnieje" };
             }
 
+            // Blokuj dołączanie podczas trwającej gry
+            if (session.IsGameStarted)
+            {
+                return new JoinSessionResultDto { Success = false, Error = "Gra już trwa, nie można dołączyć" };
+            }
+
             lock (session.Players)
             {
                 // Sprawdź limit graczy
@@ -274,8 +280,20 @@ namespace QuizApplication.Services
             // Powiadom wszystkich że gra się rozpoczęła
             await _hub.Clients.Group(code).SendAsync("GameStarted");
 
-            // Uruchom pętlę gry w tle
-            _ = Task.Run(() => RunGameLoopAsync(code, session.QuestionCts!.Token));
+            // Uruchom pętlę gry w tle z opóźnieniem na załadowanie widoku Play
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    // Daj czas na przekierowanie i załadowanie widoku Play (2 sekundy)
+                    await Task.Delay(TimeSpan.FromSeconds(2), session.QuestionCts!.Token);
+                    await RunGameLoopAsync(code, session.QuestionCts!.Token);
+                }
+                catch (TaskCanceledException)
+                {
+                    _logger.LogInformation("Game startup cancelled for session {Code}", code);
+                }
+            });
 
             return OperationResult.Ok();
         }
@@ -288,6 +306,7 @@ namespace QuizApplication.Services
                 {
                     QuestionForPlayerDto? qDto;
                     int questionId;
+                    TaskCompletionSource<bool> allAnsweredTcs;
 
                     // Przygotuj pytanie (w locku)
                     lock (_sessions[code].LockObj)
@@ -296,6 +315,14 @@ namespace QuizApplication.Services
                         s.CurrentQuestionIndex++;
                         s.AnsweredConnectionIds.Clear();
                         s.UpdateActivity();
+
+                        // Ustaw liczbę aktywnych graczy i TaskCompletionSource
+                        lock (s.Players)
+                        {
+                            s.ActivePlayersCount = s.Players.Count;
+                        }
+                        allAnsweredTcs = new TaskCompletionSource<bool>();
+                        s.AllAnsweredTcs = allAnsweredTcs;
 
                         if (s.QuizData == null || s.CurrentQuestionIndex >= s.QuizData.Questions.Count)
                         {
@@ -343,10 +370,17 @@ namespace QuizApplication.Services
 
                     _logger.LogDebug("Question {QId} shown to session {Code}", questionId, code);
 
-                    // Czekaj na czas pytania
+                    // Czekaj na czas pytania LUB na odpowiedzi wszystkich graczy
                     try
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(qDto.TimeLimitSeconds), ct);
+                        var timeoutTask = Task.Delay(TimeSpan.FromSeconds(qDto.TimeLimitSeconds), ct);
+                        var allAnsweredTask = allAnsweredTcs.Task;
+
+                        // Czekaj na pierwsze zakończone zadanie
+                        await Task.WhenAny(timeoutTask, allAnsweredTask);
+
+                        // Jeśli anulowano - wyjdź
+                        ct.ThrowIfCancellationRequested();
                     }
                     catch (TaskCanceledException)
                     {
