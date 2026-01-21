@@ -13,7 +13,7 @@ namespace QuizApplication.Controllers
     {
         private readonly IGameSessionService _gameSessionService;
         private readonly IQuizService _quizService;
-        private readonly ILogger<GameController> _logger; // Potrzebny, by pobrać kod quizu dla Hosta
+        private readonly ILogger<GameController> _logger;
 
         public GameController(
         IGameSessionService gameSessionService,
@@ -33,33 +33,49 @@ namespace QuizApplication.Controllers
             return View();
         }
 
-        // POST: /Game/Join
-        [HttpPost]
-        [ValidateAntiForgeryToken]
-        public IActionResult Join(JoinSessionDto dto)
+        // GET: /api/game/validate-join - API do walidacji przed dołączeniem
+        [HttpGet("/api/game/validate-join")]
+        public IActionResult ValidateJoin(string code, string nick)
         {
-            if (dto == null)
+            var normCode = SessionCodeHelper.Normalize(code);
+            var normNick = (nick ?? "").Trim();
+
+            // Walidacja kodu
+            if (!SessionCodeHelper.IsValid(normCode))
             {
-                ViewBag.Error = "Brak danych.";
-                return View();
+                return Json(new { success = false, error = "Nieprawidłowy kod gry" });
             }
 
-            var code = SessionCodeHelper.Normalize(dto.SessionCode);
-            var nick = (dto.PlayerName ?? "").Trim();
-
-            if (!SessionCodeHelper.IsValid(code) || string.IsNullOrWhiteSpace(nick))
+            // Sprawdź czy sesja istnieje
+            if (!_gameSessionService.SessionExists(normCode))
             {
-                ViewBag.Error = "Dane są wymagane i muszą być poprawne";
-                return View();
+                return Json(new { success = false, error = "Gra o podanym kodzie nie istnieje" });
             }
 
-            if (!_gameSessionService.SessionExists(code))
+            // Sprawdź czy gra już trwa
+            if (_gameSessionService.IsGameInProgress(normCode))
             {
-                ViewBag.Error = "Sesja nie istnieje";
-                return View();
+                return Json(new { success = false, error = "Gra już trwa, nie można dołączyć" });
             }
 
-            return RedirectToAction(nameof(Lobby), new { code, nick });
+            // Walidacja nicku
+            if (string.IsNullOrWhiteSpace(normNick))
+            {
+                return Json(new { success = false, error = "Podaj swój nick" });
+            }
+
+            if (normNick.Length > 20)
+            {
+                return Json(new { success = false, error = "Nick może mieć maksymalnie 20 znaków" });
+            }
+
+            // Sprawdź czy nick jest zajęty
+            if (_gameSessionService.IsNicknameTaken(normCode, normNick))
+            {
+                return Json(new { success = false, error = "Ten nick jest już zajęty, wybierz inny" });
+            }
+
+            return Json(new { success = true });
         }
 
         // GET: /Game/Lobby
@@ -70,12 +86,27 @@ namespace QuizApplication.Controllers
 
             if (!SessionCodeHelper.IsValid(normCode) || string.IsNullOrWhiteSpace(normNick))
             {
+                TempData["Error"] = "Nieprawidłowe dane";
                 return RedirectToAction(nameof(Join));
             }
 
             if (!_gameSessionService.SessionExists(normCode))
             {
                 TempData["Error"] = "Sesja nie istnieje lub wygasła";
+                return RedirectToAction(nameof(Join));
+            }
+
+            // Sprawdź czy gra już trwa
+            if (_gameSessionService.IsGameInProgress(normCode))
+            {
+                TempData["Error"] = "Gra już trwa, nie można dołączyć";
+                return RedirectToAction(nameof(Join));
+            }
+
+            // Sprawdź czy nick jest zajęty (podwójna walidacja)
+            if (_gameSessionService.IsNicknameTaken(normCode, normNick))
+            {
+                TempData["Error"] = "Ten nick jest już zajęty";
                 return RedirectToAction(nameof(Join));
             }
 
@@ -98,6 +129,13 @@ namespace QuizApplication.Controllers
             if (!_gameSessionService.SessionExists(normCode))
             {
                 TempData["Error"] = "Sesja nie istnieje lub wygasła";
+                return RedirectToAction(nameof(Join));
+            }
+
+            // Sprawdź czy gracz jest w sesji
+            if (!_gameSessionService.IsPlayerInSessionByNickname(normCode, normNick))
+            {
+                TempData["Error"] = "Nie jesteś uczestnikiem tej gry";
                 return RedirectToAction(nameof(Join));
             }
 
@@ -202,6 +240,7 @@ namespace QuizApplication.Controllers
         }
 
         #endregion
+
 
     }
 }

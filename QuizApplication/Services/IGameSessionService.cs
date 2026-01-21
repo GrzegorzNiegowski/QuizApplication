@@ -25,8 +25,12 @@ namespace QuizApplication.Services
         bool IsHost(string connectionId);
         void SetHostConnectionId(string sessionCode, string connectionId);
         bool IsNicknameTaken(string sessionCode, string nickname);
+        bool IsGameInProgress(string sessionCode);
+        bool IsPlayerInSessionByNickname(string sessionCode, string nickname);
 
-        // Rozgrywka (Logika)
+        // Rozgrywka (Logika) - indywidualna dla każdego gracza
+        QuestionForPlayerDto? GetNextQuestionForPlayer(string sessionCode, string connectionId);
+        bool IsPlayerFinished(string sessionCode, string connectionId);
         ScoreboardDto GetLeaderboard(string sessionCode);
         bool IsHostOfSession(string sessionCode, string connectionId);
         OperationResult SubmitAnswer(string sessionCode, string connectionId, SubmitAnswerDto dto);

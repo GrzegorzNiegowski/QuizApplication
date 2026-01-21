@@ -5,6 +5,7 @@
     <h2>Dołącz do Quizu</h2>
     <div class="row justify-content-center">
         <div class="col-md-4">
+            <div id="errorAlert" class="alert alert-danger" style="display: none;"></div>
             @if (ViewBag.Error != null)
             {
                 <div class="alert alert-danger">
@@ -26,24 +27,55 @@
                     <input type="text" id="nickname" name="PlayerName" class="form-control"
                            placeholder="Twój nick" required maxlength="20" />
                 </div>
-                <button type="submit" class="btn btn-primary w-100">DOŁĄCZ</button>
+                <button type="submit" id="submitBtn" class="btn btn-primary w-100">DOŁĄCZ</button>
             </form>
         </div>
     </div>
 </div>
 @section Scripts {
     <script>
-        document.getElementById("joinForm").addEventListener("submit", function (e) {
-        e.preventDefault();
-                const code = document.getElementById("accessCode").value.trim();
-                const nick = document.getElementById("nickname").value.trim();
+        document.getElementById("joinForm").addEventListener("submit", async function (e) {
+            e.preventDefault();
 
-                if (!code || !nick) {
-                    alert("Wypełnij wszystkie pola");
-                    return;
+            const code = document.getElementById("accessCode").value.trim().toUpperCase();
+            const nick = document.getElementById("nickname").value.trim();
+            const errorAlert = document.getElementById("errorAlert");
+            const submitBtn = document.getElementById("submitBtn");
+
+            errorAlert.style.display = "none";
+
+            if (!code || !nick) {
+                errorAlert.textContent = "Wypełnij wszystkie pola";
+                errorAlert.style.display = "block";
+                return;
+            }
+
+            // Zablokuj przycisk podczas walidacji
+            submitBtn.disabled = true;
+            submitBtn.textContent = "Sprawdzanie...";
+
+            try {
+                // Walidacja przez API
+                const response = await fetch(`/api/game/validate-join?code=${encodeURIComponent(code)}&nick=${encodeURIComponent(nick)}`);
+                const result = await response.json();
+
+                if (result.success) {
+                    // Wszystko OK - przekieruj do Lobby
+                    window.location.href = `/Game/Lobby?code=${encodeURIComponent(code)}&nick=${encodeURIComponent(nick)}`;
+                } else {
+                    // Pokaż błąd
+                    errorAlert.textContent = result.error || "Nie można dołączyć do gry";
+                    errorAlert.style.display = "block";
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = "DOŁĄCZ";
                 }
-
-                window.location.href = `/Game/Lobby?code=${encodeURIComponent(code)}&nick=${encodeURIComponent(nick)}`;
-            });
+            } catch (err) {
+                console.error("Validation error:", err);
+                errorAlert.textContent = "Błąd połączenia z serwerem";
+                errorAlert.style.display = "block";
+                submitBtn.disabled = false;
+                submitBtn.textContent = "DOŁĄCZ";
+            }
+        });
     </script>
 }

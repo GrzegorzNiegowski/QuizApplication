@@ -37,7 +37,7 @@ namespace QuizApplication.Hubs
                 return;
             }
 
-            // Przypoisanie ConnectionId hosta do sesji
+            // Przypisanie ConnectionId hosta do sesji
             _sessionService.SetHostConnectionId(code, Context.ConnectionId);
 
             // Dodaj do grupy SignalR
@@ -128,35 +128,42 @@ namespace QuizApplication.Hubs
                 players.Select(p => p.PlayerName).ToList());
         }
 
-        public async Task ReconnectPlayer(string accessCode, Guid participantId)
+        /// <summary>
+        /// Gracz prosi o następne pytanie (indywidualna rozgrywka)
+        /// </summary>
+        public async Task RequestNextQuestion(string accessCode)
         {
             var code = SessionCodeHelper.Normalize(accessCode);
 
             if (!SessionCodeHelper.IsValid(code))
             {
-                await SendErrors("Nieprawidłowy kod sesji");
+                await SendErrors("Nieprawidłowy kod gry.");
                 return;
             }
 
             if (!_sessionService.SessionExists(code))
             {
-                await SendErrors("Sesja nie istnieje");
+                await SendErrors("Sesja o podanym kodzie nie istnieje.");
                 return;
             }
 
-            var updated = _sessionService.UpdatePlayerConnection(code, participantId, Context.ConnectionId);
+            // Pobierz następne pytanie dla tego gracza
+            var question = _sessionService.GetNextQuestionForPlayer(code, Context.ConnectionId);
 
-            if (updated)
+            if (question == null)
             {
-                await Groups.AddToGroupAsync(Context.ConnectionId, code);
-                await Clients.Caller.SendAsync("ReconnectSuccess");
+                // Gracz skończył quiz - wyślij wyniki
+                var leaderboard = _sessionService.GetLeaderboard(code);
+                await Clients.Caller.SendAsync("GameOver", leaderboard);
 
-                _logger.LogInformation("Player {ParticipantId} reconnected to session {Code}",
-                    participantId, code);
+                _logger.LogInformation("Player finished quiz in session {Code}", code);
             }
             else
             {
-                await SendErrors("Nie udało się ponownie połączyć. Gracz nie znaleziony w sesji.");
+                await Clients.Caller.SendAsync("ShowQuestion", question);
+
+                _logger.LogDebug("Question {QId} sent to player in session {Code}",
+                    question.QuestionId, code);
             }
         }
 
@@ -198,10 +205,18 @@ namespace QuizApplication.Hubs
                 return;
             }
 
-            await Clients.Caller.SendAsync("AnswerAccepted");
+            // Pobierz poprawną odpowiedź i wyślij reveal
+            var reveal = GetRevealPayload(code, dto.QuestionId);
+            await Clients.Caller.SendAsync("RevealAnswer", reveal);
 
             _logger.LogDebug("Answer submitted for question {QuestionId} in session {Code}",
                 dto.QuestionId, code);
+        }
+
+        private object GetRevealPayload(string code, int questionId)
+        {
+            // Ta metoda jest uproszczona - w przyszłości można dodać do serwisu
+            return new { QuestionId = questionId };
         }
 
         #endregion
@@ -226,10 +241,14 @@ namespace QuizApplication.Hubs
                 }
                 else
                 {
-                    _sessionService.RemovePlayer(connectionId);
-                    var players = _sessionService.GetPlayersInSession(code);
-                    await Clients.Group(code).SendAsync("UpdatePlayerList",
-                        players.Select(p => p.PlayerName).ToList());
+                    // Nie usuwaj gracza podczas trwającej gry - tylko w lobby
+                    if (!_sessionService.IsGameInProgress(code))
+                    {
+                        _sessionService.RemovePlayer(connectionId);
+                        var players = _sessionService.GetPlayersInSession(code);
+                        await Clients.Group(code).SendAsync("UpdatePlayerList",
+                            players.Select(p => p.PlayerName).ToList());
+                    }
 
                     _logger.LogInformation("Player disconnected from session {Code}", code);
                 }

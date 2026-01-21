@@ -1,35 +1,49 @@
 ﻿@model QuizApplication.Models.ViewModels.PlayViewModel
 @{
-    ViewData["Title"] = "Gra (Gracz)";
+    ViewData["Title"] = "Quiz";
 }
 <div class="container mt-4">
-    <h2>Gra (Gracz)</h2>
-    <div class="text-muted">
-        Kod: <strong id="code">@Model.AccessCode</strong> |
-        Nick: <strong id="nick">@Model.Nickname</strong>
-    </div>
-    <hr />
-
-    <div id="waitingArea">
-        <div class="spinner-border" role="status"></div>
-        <span class="ms-2">Czekamy na pytanie...</span>
+    <div class="text-muted mb-3">
+        Kod: <strong>@Model.AccessCode</strong> |
+        Gracz: <strong>@Model.Nickname</strong>
     </div>
 
+    <!-- Czekanie na pytanie -->
+    <div id="waitingArea" class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-3">Ładowanie pytania...</p>
+    </div>
+
+    <!-- Obszar pytania -->
     <div id="questionArea" style="display:none;">
-        <div class="d-flex justify-content-between align-items-center">
-            <div id="progress" class="text-muted"></div>
-            <div class="text-muted">Timer: <strong><span id="timer">-</span></strong> s</div>
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span id="progress" class="text-muted"></span>
+                <span class="badge bg-primary fs-5">
+                    <span id="timer">--</span>s
+                </span>
+            </div>
+            <div class="card-body">
+                <h4 id="questionText" class="card-title mb-4"></h4>
+                <div id="answers"></div>
+                <p id="answerStatus" class="mt-3 text-center text-muted"></p>
+            </div>
         </div>
+    </div>
 
-        <h3 id="questionText" class="mt-3"></h3>
-
-        <div id="answers" class="mt-3"></div>
-
-        <div id="answerStatus" class="mt-2 text-muted"></div>
-
-        <div class="mt-4">
-            <h5>Wyniki</h5>
-            <ul id="scoreboard" class="list-group"></ul>
+    <!-- Wyniki końcowe -->
+    <div id="resultsArea" style="display:none;">
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h4 class="mb-0">🎉 Koniec quizu!</h4>
+            </div>
+            <div class="card-body">
+                <h5>Wyniki:</h5>
+                <ul id="scoreboard" class="list-group"></ul>
+                <div class="text-center mt-4">
+                    <a href="/Game/Join" class="btn btn-primary">Dołącz do kolejnej gry</a>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -39,6 +53,6 @@
     <script src="~/js/quiz-game.js"></script>
     <script>
         const client = new QuizGameClient("@Model.AccessCode", "@Model.Nickname", false);
-        client.connect();
+        client.connectForGame();
     </script>
 }

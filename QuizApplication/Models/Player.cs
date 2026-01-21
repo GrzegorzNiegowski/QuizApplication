@@ -1,4 +1,5 @@
-﻿using System.Security.Permissions;
+﻿using QuizApplication.Utilities;
+using System.Security.Permissions;
 
 namespace QuizApplication.Models
 {
@@ -9,6 +10,7 @@ namespace QuizApplication.Models
         public string Nickname { get; set; } = string.Empty;
         public int Score { get; set; } = 0;
 
-
+        // Indywidualny stan gry gracza
+        public PlayerGameState GameState { get; set; } = new();
     }
 }

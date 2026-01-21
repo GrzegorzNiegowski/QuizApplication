@@ -76,7 +76,6 @@ namespace QuizApplication.Services
                 HostUserId = hostUserId,
                 Players = new List<Player>(),
                 HostConnectionId = "",
-                CurrentQuestionIndex = -1,
                 IsGameStarted = false,
                 CreatedAt = DateTimeOffset.UtcNow,
                 LastActivity = DateTimeOffset.UtcNow
@@ -265,155 +264,120 @@ namespace QuizApplication.Services
                     return OperationResult.Fail("Quiz nie ma żadnych pytań.");
                 }
 
+                if (session.Players.Count == 0)
+                {
+                    return OperationResult.Fail("Brak graczy w sesji.");
+                }
+
                 session.IsGameStarted = true;
-                session.CurrentQuestionIndex = -1;
                 session.UpdateActivity();
 
                 // Anuluj poprzedni task jeśli istnieje
-                session.QuestionCts?.Cancel();
-                session.QuestionCts?.Dispose();
-                session.QuestionCts = new CancellationTokenSource();
+                session.GameCts?.Cancel();
+                session.GameCts?.Dispose();
+                session.GameCts = new CancellationTokenSource();
+
+                // Zresetuj stan gry dla wszystkich graczy
+                lock (session.Players)
+                {
+                    foreach (var player in session.Players)
+                    {
+                        player.GameState = new PlayerGameState();
+                        player.Score = 0;
+                    }
+                }
             }
 
-            _logger.LogInformation("Game started for session {Code}", code);
+            _logger.LogInformation("Game started for session {Code} with {PlayerCount} players",
+                code, session.Players.Count);
 
             // Powiadom wszystkich że gra się rozpoczęła
             await _hub.Clients.Group(code).SendAsync("GameStarted");
 
-            // Uruchom pętlę gry w tle z opóźnieniem na załadowanie widoku Play
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    // Daj czas na przekierowanie i załadowanie widoku Play (2 sekundy)
-                    await Task.Delay(TimeSpan.FromSeconds(2), session.QuestionCts!.Token);
-                    await RunGameLoopAsync(code, session.QuestionCts!.Token);
-                }
-                catch (TaskCanceledException)
-                {
-                    _logger.LogInformation("Game startup cancelled for session {Code}", code);
-                }
-            });
-
             return OperationResult.Ok();
         }
 
-        private async Task RunGameLoopAsync(string code, CancellationToken ct)
+        /// <summary>
+        /// Pobiera następne pytanie dla gracza (indywidualna rozgrywka)
+        /// </summary>
+        public QuestionForPlayerDto? GetNextQuestionForPlayer(string sessionCode, string connectionId)
         {
-            try
+            var code = SessionCodeHelper.Normalize(sessionCode);
+
+            if (!_sessions.TryGetValue(code, out var session))
             {
-                while (!ct.IsCancellationRequested)
+                return null;
+            }
+
+            if (!session.IsGameStarted || session.QuizData == null)
+            {
+                return null;
+            }
+
+            Player? player;
+            lock (session.Players)
+            {
+                player = session.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+            }
+
+            if (player == null)
+            {
+                return null;
+            }
+
+            var gameState = player.GameState;
+
+            // Przejdź do następnego pytania
+            gameState.CurrentQuestionIndex++;
+
+            // Sprawdź czy są jeszcze pytania
+            if (gameState.CurrentQuestionIndex >= session.QuizData.Questions.Count)
+            {
+                gameState.IsFinished = true;
+                return null;
+            }
+
+            var question = session.QuizData.Questions[gameState.CurrentQuestionIndex];
+            gameState.CurrentQuestionStartUtc = DateTimeOffset.UtcNow;
+
+            session.UpdateActivity();
+
+            return new QuestionForPlayerDto
+            {
+                QuestionId = question.Id,
+                Content = question.Content,
+                TimeLimitSeconds = question.TimeLimitSeconds,
+                Points = question.Points,
+                CurrentQuestionIndex = gameState.CurrentQuestionIndex + 1,
+                TotalQuestions = session.QuizData.Questions.Count,
+                ServerStartUtc = gameState.CurrentQuestionStartUtc.Value,
+                Answers = question.Answers.Select(a => new AnswerForPlayerDto
                 {
-                    QuestionForPlayerDto? qDto;
-                    int questionId;
-                    TaskCompletionSource<bool> allAnsweredTcs;
+                    AnswerId = a.Id,
+                    Content = a.Content
+                }).ToList()
+            };
+        }
 
-                    // Przygotuj pytanie (w locku)
-                    lock (_sessions[code].LockObj)
-                    {
-                        var s = _sessions[code];
-                        s.CurrentQuestionIndex++;
-                        s.AnsweredConnectionIds.Clear();
-                        s.UpdateActivity();
+        /// <summary>
+        /// Sprawdza czy gracz zakończył quiz
+        /// </summary>
+        public bool IsPlayerFinished(string sessionCode, string connectionId)
+        {
+            var code = SessionCodeHelper.Normalize(sessionCode);
 
-                        // Ustaw liczbę aktywnych graczy i TaskCompletionSource
-                        lock (s.Players)
-                        {
-                            s.ActivePlayersCount = s.Players.Count;
-                        }
-                        allAnsweredTcs = new TaskCompletionSource<bool>();
-                        s.AllAnsweredTcs = allAnsweredTcs;
-
-                        if (s.QuizData == null || s.CurrentQuestionIndex >= s.QuizData.Questions.Count)
-                        {
-                            qDto = null;
-                            questionId = 0;
-                        }
-                        else
-                        {
-                            var fullQ = s.QuizData.Questions[s.CurrentQuestionIndex];
-                            s.CurrentQuestionStartUtc = DateTimeOffset.UtcNow;
-                            s.CurrentQuestionTimeLimitSeconds = fullQ.TimeLimitSeconds;
-                            questionId = fullQ.Id;
-
-                            qDto = new QuestionForPlayerDto
-                            {
-                                QuestionId = fullQ.Id,
-                                Content = fullQ.Content,
-                                TimeLimitSeconds = fullQ.TimeLimitSeconds,
-                                Points = fullQ.Points,
-                                CurrentQuestionIndex = s.CurrentQuestionIndex + 1,
-                                TotalQuestions = s.QuizData.Questions.Count,
-                                ServerStartUtc = s.CurrentQuestionStartUtc.Value,
-                                Answers = fullQ.Answers.Select(a => new AnswerForPlayerDto
-                                {
-                                    AnswerId = a.Id,
-                                    Content = a.Content
-                                }).ToList()
-                            };
-                        }
-                    } // Lock zwolniony
-
-                    // Jeśli nie ma więcej pytań - zakończ grę
-                    if (qDto == null)
-                    {
-                        var leaderboard = GetLeaderboard(code);
-                        await _hub.Clients.Group(code).SendAsync("GameOver",
-                            leaderboard.Players.ToDictionary(k => k.PlayerName, v => v.Score));
-
-                        _logger.LogInformation("Game ended for session {Code}", code);
-                        return;
-                    }
-
-                    // Wyślij pytanie (poza lockiem)
-                    await _hub.Clients.Group(code).SendAsync("ShowQuestion", qDto);
-
-                    _logger.LogDebug("Question {QId} shown to session {Code}", questionId, code);
-
-                    // Czekaj na czas pytania LUB na odpowiedzi wszystkich graczy
-                    try
-                    {
-                        var timeoutTask = Task.Delay(TimeSpan.FromSeconds(qDto.TimeLimitSeconds), ct);
-                        var allAnsweredTask = allAnsweredTcs.Task;
-
-                        // Czekaj na pierwsze zakończone zadanie
-                        await Task.WhenAny(timeoutTask, allAnsweredTask);
-
-                        // Jeśli anulowano - wyjdź
-                        ct.ThrowIfCancellationRequested();
-                    }
-                    catch (TaskCanceledException)
-                    {
-                        _logger.LogInformation("Game loop cancelled for session {Code}", code);
-                        return;
-                    }
-
-                    // Pokaż poprawną odpowiedź
-                    var reveal = BuildRevealPayload(code, questionId);
-                    await _hub.Clients.Group(code).SendAsync("RevealAnswer", reveal);
-
-                    // Wyślij zaktualizowany scoreboard
-                    var scoreboard = GetLeaderboard(code);
-                    await _hub.Clients.Group(code).SendAsync("ScoreboardUpdate", scoreboard);
-
-                    // Przerwa przed następnym pytaniem
-                    try
-                    {
-                        await Task.Delay(TimeSpan.FromSeconds(GameConstants.QuestionTransitionSeconds), ct);
-                    }
-                    catch (TaskCanceledException)
-                    {
-                        _logger.LogInformation("Game loop cancelled for session {Code}", code);
-                        return;
-                    }
-                }
-            }
-            catch (Exception ex)
+            if (!_sessions.TryGetValue(code, out var session))
             {
-                _logger.LogError(ex, "Error in game loop for session {Code}", code);
-                await _hub.Clients.Group(code).SendAsync("ShowError",
-                    new[] { "Wystąpił błąd podczas gry. Gra została zakończona." });
+                return true;
             }
+
+            Player? player;
+            lock (session.Players)
+            {
+                player = session.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+            }
+
+            return player?.GameState.IsFinished ?? true;
         }
 
         private object BuildRevealPayload(string code, int questionId)
@@ -448,46 +412,65 @@ namespace QuizApplication.Services
                 return OperationResult.Fail("Gra jeszcze się nie rozpoczęła.");
             }
 
-            if (s.CurrentQuestionIndex < 0 || s.QuizData == null ||
-                s.CurrentQuestionIndex >= s.QuizData.Questions.Count)
+            if (s.QuizData == null)
+            {
+                return OperationResult.Fail("Brak danych quizu.");
+            }
+
+            // Znajdź gracza
+            Player? player;
+            lock (s.Players)
+            {
+                player = s.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+            }
+
+            if (player == null)
+            {
+                return OperationResult.Fail("Nie jesteś graczem w tej sesji.");
+            }
+
+            var gameState = player.GameState;
+
+            // Sprawdź czy gracz nie skończył
+            if (gameState.IsFinished)
+            {
+                return OperationResult.Fail("Quiz został już zakończony.");
+            }
+
+            // Sprawdź czy pytanie odpowiada aktualnemu pytaniu gracza
+            if (gameState.CurrentQuestionIndex < 0 || gameState.CurrentQuestionIndex >= s.QuizData.Questions.Count)
             {
                 return OperationResult.Fail("Brak aktywnego pytania.");
             }
 
-            var currentQ = s.QuizData.Questions[s.CurrentQuestionIndex];
+            var currentQ = s.QuizData.Questions[gameState.CurrentQuestionIndex];
 
             if (currentQ.Id != dto.QuestionId)
             {
                 return OperationResult.Fail("To pytanie nie jest aktualne.");
             }
 
-            // Czy gracz w sesji
-            lock (s.Players)
+            // Sprawdź czy już odpowiedział na to pytanie
+            if (gameState.AnsweredQuestionIds.Contains(dto.QuestionId))
             {
-                if (!s.Players.Any(p => p.ConnectionId == connectionId))
-                {
-                    return OperationResult.Fail("Nie jesteś graczem w tej sesji.");
-                }
+                return OperationResult.Fail("Już odpowiedziałeś na to pytanie.");
             }
 
             // Sprawdź czas
-            var start = s.CurrentQuestionStartUtc;
+            var start = gameState.CurrentQuestionStartUtc;
             if (start == null)
             {
                 return OperationResult.Fail("Brak aktywnego pytania.");
             }
 
             var elapsed = DateTimeOffset.UtcNow - start.Value;
-            if (elapsed.TotalSeconds > s.CurrentQuestionTimeLimitSeconds + GameConstants.TimerToleranceSeconds)
+            if (elapsed.TotalSeconds > currentQ.TimeLimitSeconds + GameConstants.TimerToleranceSeconds)
             {
                 return OperationResult.Fail("Czas na odpowiedź minął.");
             }
 
-            // Blokada wielokrotnych odpowiedzi (thread-safe)
-            if (!s.TryRecordAnswer(connectionId))
-            {
-                return OperationResult.Fail("Już odpowiedziałeś na to pytanie.");
-            }
+            // Zapisz odpowiedź
+            gameState.AnsweredQuestionIds.Add(dto.QuestionId);
 
             // Czy answer należy do pytania
             var answer = currentQ.Answers.FirstOrDefault(a => a.Id == dto.AnswerId);
@@ -499,16 +482,9 @@ namespace QuizApplication.Services
             // Dodaj punkty jeśli poprawna
             if (answer.IsCorrect)
             {
-                lock (s.Players)
-                {
-                    var player = s.Players.FirstOrDefault(x => x.ConnectionId == connectionId);
-                    if (player != null)
-                    {
-                        player.Score += currentQ.Points;
-                        _logger.LogDebug("Player {Nick} scored {Points} points",
-                            player.Nickname, currentQ.Points);
-                    }
-                }
+                player.Score += currentQ.Points;
+                _logger.LogDebug("Player {Nick} scored {Points} points for question {QId}",
+                    player.Nickname, currentQ.Points, dto.QuestionId);
             }
 
             s.UpdateActivity();
@@ -572,7 +548,37 @@ namespace QuizApplication.Services
 
             if (_sessions.TryGetValue(code, out var s))
             {
-                return s.Players.Any(p => p.Nickname.Equals(nickname, StringComparison.OrdinalIgnoreCase));
+                lock (s.Players)
+                {
+                    return s.Players.Any(p => p.Nickname.Equals(nickname, StringComparison.OrdinalIgnoreCase));
+                }
+            }
+
+            return false;
+        }
+
+        public bool IsGameInProgress(string sessionCode)
+        {
+            var code = SessionCodeHelper.Normalize(sessionCode);
+
+            if (_sessions.TryGetValue(code, out var s))
+            {
+                return s.IsGameStarted;
+            }
+
+            return false;
+        }
+
+        public bool IsPlayerInSessionByNickname(string sessionCode, string nickname)
+        {
+            var code = SessionCodeHelper.Normalize(sessionCode);
+
+            if (_sessions.TryGetValue(code, out var s))
+            {
+                lock (s.Players)
+                {
+                    return s.Players.Any(p => p.Nickname.Equals(nickname, StringComparison.OrdinalIgnoreCase));
+                }
             }
 
             return false;
@@ -645,13 +651,20 @@ namespace QuizApplication.Services
                         continue;
                     }
 
-                    // Usuń zakończone gry > 30 min
-                    if (session.IsGameStarted &&
-                        session.CurrentQuestionIndex >= (session.QuizData?.Questions.Count ?? 0) &&
-                        timeSinceActivity.TotalMinutes > GameConstants.CompletedGameTimeoutMinutes)
+                    // Usuń zakończone gry > 30 min (wszystkie gracze skończyli)
+                    if (session.IsGameStarted && timeSinceActivity.TotalMinutes > GameConstants.CompletedGameTimeoutMinutes)
                     {
-                        toRemove.Add(kvp.Key);
-                        _logger.LogInformation("Marking completed game session {Code} for cleanup", kvp.Key);
+                        bool allFinished;
+                        lock (session.Players)
+                        {
+                            allFinished = session.Players.All(p => p.GameState.IsFinished);
+                        }
+
+                        if (allFinished)
+                        {
+                            toRemove.Add(kvp.Key);
+                            _logger.LogInformation("Marking completed game session {Code} for cleanup", kvp.Key);
+                        }
                     }
                 }
 
@@ -662,8 +675,8 @@ namespace QuizApplication.Services
                         // Anuluj task gry jeśli jeszcze działa
                         try
                         {
-                            removed.QuestionCts?.Cancel();
-                            removed.QuestionCts?.Dispose();
+                            removed.GameCts?.Cancel();
+                            removed.GameCts?.Dispose();
                         }
                         catch (Exception ex)
                         {
@@ -711,8 +724,8 @@ namespace QuizApplication.Services
             {
                 try
                 {
-                    session.QuestionCts?.Cancel();
-                    session.QuestionCts?.Dispose();
+                    session.GameCts?.Cancel();
+                    session.GameCts?.Dispose();
                 }
                 catch (Exception ex)
                 {
