@@ -11,9 +11,12 @@ var builder = WebApplication.CreateBuilder(args);
 // Database
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
 options.UseNpgsql(connectionString));
+
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
+
 // Identity
 builder.Services.AddDefaultIdentity<ApplicationUser>(options =>
 options.SignIn.RequireConfirmedAccount = false)
