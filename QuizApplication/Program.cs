@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuizApplication.Data;
-using QuizApplication.Hubs;
+//using QuizApplication.Hubs;
 using QuizApplication.Models;
 using QuizApplication.Services;
 using QuizApplication.Utilities;
@@ -27,7 +27,7 @@ builder.Services.AddControllersWithViews();
 // Services
 builder.Services.AddScoped<IQuizService, QuizService>();
 builder.Services.AddScoped<IQuestionService, QuestionService>();
-builder.Services.AddSingleton<IGameSessionService, GameSessionService>();
+//builder.Services.AddSingleton<IGameSessionService, GameSessionService>();
 // SignalR with configuration
 builder.Services.AddSignalR(options =>
 {
@@ -69,7 +69,7 @@ app.MapControllerRoute(
 name: "default",
 pattern: "{controller=Home}/{action=Index}/{id?}");
 app.MapRazorPages();
-app.MapHub<QuizHub>("/quizHub");
+//app.MapHub<QuizHub>("/quizHub");
 app.Logger.LogInformation("Application started in {Environment} mode",
 app.Environment.EnvironmentName);
 app.Run();

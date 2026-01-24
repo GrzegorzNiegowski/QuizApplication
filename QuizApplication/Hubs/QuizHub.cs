@@ -5,6 +5,9 @@ using QuizApplication.Models;
 using QuizApplication.Services;
 using QuizApplication.Utilities;
 using QuizApplication.Validation;
+
+
+
 namespace QuizApplication.Hubs
 {
     //kontroler" dla WebSocketów.
@@ -183,7 +186,7 @@ namespace QuizApplication.Hubs
                 return;
             }
 
-            var errors = DtoValidators.ValidateSubmitAnswer(dto);
+            var errors = DtoValidators.ValidateAnswers(dto);
             if (errors.Any())
             {
                 await SendErrors(errors);
@@ -257,6 +260,9 @@ namespace QuizApplication.Hubs
             await base.OnDisconnectedAsync(exception);
         }
 
+
+
+
         #endregion
 
         #region Helpers
@@ -271,3 +277,5 @@ namespace QuizApplication.Hubs
 
     }
 }
+
+

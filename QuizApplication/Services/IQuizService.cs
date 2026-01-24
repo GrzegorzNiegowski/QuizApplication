@@ -2,7 +2,6 @@
 using QuizApplication.DTOs.GameDtos;
 using QuizApplication.DTOs.QuizDtos;
 using QuizApplication.Models;
-using QuizApplication.Models.ViewModels;
 using QuizApplication.Utilities;
 using System.Threading.Tasks;
 

@@ -1,6 +1,4 @@
-﻿using QuizApplication.DTOs;
-using QuizApplication.DTOs.QuestionDtos;
-using QuizApplication.Models.ViewModels;
+﻿using QuizApplication.DTOs.QuestionDtos;
 using QuizApplication.Utilities;
 
 namespace QuizApplication.Services

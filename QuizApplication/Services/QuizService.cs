@@ -5,7 +5,6 @@ using QuizApplication.DTOs.GameDtos;
 using QuizApplication.DTOs.QuestionDtos;
 using QuizApplication.DTOs.QuizDtos;
 using QuizApplication.Models;
-using QuizApplication.Models.ViewModels;
 using QuizApplication.Utilities;
 namespace QuizApplication.Services
 {

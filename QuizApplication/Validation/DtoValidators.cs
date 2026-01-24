@@ -110,7 +110,7 @@ namespace QuizApplication.Validation
                 return errors;
             }
 
-            if (dto.Id <= 0)
+            if (dto.QuestionId <= 0)
                 errors.Add("Nieprawidłowy identyfikator pytania");
 
             if (dto.QuizId <= 0)

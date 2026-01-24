@@ -3,7 +3,7 @@ using QuizApplication.DTOs;
 using QuizApplication.DTOs.GameDtos;
 using QuizApplication.DTOs.RealTimeDtos;
 using QuizApplication.DTOs.SessionDtos;
-using QuizApplication.Hubs;
+//using QuizApplication.Hubs;
 using QuizApplication.Models;
 using QuizApplication.Utilities;
 using System.Collections.Concurrent;
@@ -736,5 +736,10 @@ namespace QuizApplication.Services
             _connectionToSession.Clear();
         }
         //#endregion
+
+
+
+       
     }
 }
+

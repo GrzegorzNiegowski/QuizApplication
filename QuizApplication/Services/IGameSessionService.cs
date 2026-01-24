@@ -38,5 +38,6 @@ namespace QuizApplication.Services
 
         // Statystyki (dla admin/monitoring)
         SessionStatisticsDto GetSessionStatistics();
+
     }
 }
