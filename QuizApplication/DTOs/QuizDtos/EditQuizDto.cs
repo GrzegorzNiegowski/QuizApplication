@@ -3,16 +3,15 @@
 namespace QuizApplication.DTOs.QuizDtos
 {
     /// <summary>
-    /// DTO do tworzenia nowego quizu
+    /// DTO do edycji quizu
     /// </summary>
-    public class CreateQuizDto
+    public class EditQuizDto
     {
-        [Required(ErrorMessage = "Tytuł quizu jest wymagany")]
+        public int Id { get; set; }
+
+        [Required(ErrorMessage = "Tytuł jest wymagany")]
         [Display(Name = "Tytuł quizu")]
         [MaxLength(200, ErrorMessage = "Tytuł może mieć maksymalnie 200 znaków")]
         public string Title { get; set; } = string.Empty;
-
-        // Ustawiany automatycznie w kontrolerze
-        public string? OwnerId { get; set; }
     }
 }

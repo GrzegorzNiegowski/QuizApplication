@@ -3,22 +3,49 @@
     ViewData["Title"] = "Usuń pytanie";
 }
 
-<h2>Usuń pytanie</h2>
+<h1 class="mb-4 text-danger">Usuń pytanie</h1>
 
-<div>
-    <p>Czy na pewno chcesz usunąć to pytanie?</p>
-    <div><strong>@Model.Content</strong></div>
-    <ul>
-        @foreach (var a in Model.Answers)
-        {
-            <li>@a.Content @(a.IsCorrect ? "(poprawna)" : "")</li>
-        }
-    </ul>
+<div class="alert alert-warning">
+    <h4 class="alert-heading">Czy na pewno chcesz usunąć to pytanie?</h4>
+    <p class="mb-0">Ta operacja jest <strong>nieodwracalna</strong>.</p>
+</div>
 
-    <form asp-action="Delete" method="post">
-        @Html.AntiForgeryToken()
-        <input type="hidden" name="questionId" value="@Model.QuestionId" />
-        <button type="submit" class="btn btn-danger">Usuń</button>
-        <a asp-controller="Quizzes" asp-action="Details" asp-route-id="@Model.QuizId" class="btn btn-secondary">Anuluj</a>
-    </form>
+<div class="card shadow-sm">
+    <div class="card-header bg-light">
+        <strong>Pytanie do usunięcia</strong>
+    </div>
+    <div class="card-body">
+        <h5 class="mb-3">@Model.Content</h5>
+
+        <p class="text-muted mb-2">Odpowiedzi:</p>
+        <ul class="list-group mb-3">
+            @foreach (var answer in Model.Answers)
+            {
+                <li class="list-group-item @(answer.IsCorrect ? "list-group-item-success" : "")">
+                    @if (answer.IsCorrect)
+                    {
+                        <span class="text-success fw-bold">✓</span>
+                    }
+                    @answer.Content
+                </li>
+            }
+        </ul>
+
+        <div class="row text-muted small">
+            <div class="col">Czas: @Model.TimeLimitSeconds s</div>
+            <div class="col">Punkty: @Model.Points</div>
+        </div>
+    </div>
+    <div class="card-footer bg-transparent">
+        <form asp-action="Delete" method="post">
+            <input type="hidden" name="id" value="@Model.QuestionId" />
+            <button type="submit" class="btn btn-danger">
+                Tak, usuń pytanie
+            </button>
+            <a asp-controller="Quizzes" asp-action="Details" asp-route-id="@Model.QuizId"
+               class="btn btn-secondary">
+                Anuluj
+            </a>
+        </form>
+    </div>
 </div>

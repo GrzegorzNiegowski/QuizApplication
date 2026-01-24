@@ -1,46 +1,55 @@
-﻿@model IEnumerable<QuizApplication.DTOs.QuizDtos.QuizSummaryDto>
+﻿@using QuizApplication.DTOs.QuizDtos
+@model IEnumerable<QuizListDto>
 @{
-    ViewData["Title"] = "Twoje Quizy";
+    ViewData["Title"] = "Moje quizy";
 }
 
-<h1>Index</h1>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Moje quizy</h1>
+    <a asp-action="Create" class="btn btn-success">
+        Utwórz nowy quiz
+    </a>
+</div>
 
-<p>
-    <a asp-action="Create">Utwórz nowy Quiz</a>
-</p>
-<table class="table">
-    <thead>
-        <tr>
-            <th>
-                @Html.DisplayNameFor(model => model.Title)
-            </th>
-            <th>
-                @Html.DisplayNameFor(model => model.AccessCode)
-            </th>
-            <th>
-                @Html.DisplayNameFor(model => model.CreatedAt)
-            </th>
-            <th></th>
-        </tr>
-    </thead>
-    <tbody>
-@foreach (var item in Model) {
-        <tr>
-            <td>
-                @Html.DisplayFor(modelItem => item.Title)
-            </td>
-            <td>
-                @Html.DisplayFor(modelItem => item.AccessCode)
-            </td>
-            <td>
-                @Html.DisplayFor(modelItem => item.CreatedAt)
-            </td>
-            <td>
-                <a asp-action="Edit" asp-route-id="@item.Id">Edit</a> |
-                <a asp-action="Details" asp-route-id="@item.Id">Details</a> |
-                <a asp-action="Delete" asp-route-id="@item.Id">Delete</a>
-            </td>
-        </tr>
+@if (!Model.Any())
+{
+    <div class="alert alert-info text-center py-5">
+        <h4>Nie masz jeszcze żadnych quizów</h4>
+        <p class="mb-3">Kliknij przycisk powyżej, aby utworzyć swój pierwszy quiz!</p>
+    </div>
 }
-    </tbody>
-</table>
+else
+{
+    <div class="row">
+        @foreach (var quiz in Model)
+        {
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title">@quiz.Title</h5>
+                        <div class="d-flex justify-content-between text-muted small mb-3">
+                            <span>Kod: <strong class="text-primary">@quiz.AccessCode</strong></span>
+                            <span>Pytań: <strong>@quiz.QuestionCount</strong></span>
+                        </div>
+                        <p class="text-muted small">
+                            Utworzono: @quiz.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")
+                        </p>
+                    </div>
+                    <div class="card-footer bg-transparent border-top-0">
+                        <div class="btn-group w-100">
+                            <a asp-action="Details" asp-route-id="@quiz.Id" class="btn btn-outline-primary">
+                                Szczegóły
+                            </a>
+                            <a asp-action="Edit" asp-route-id="@quiz.Id" class="btn btn-outline-secondary">
+                                Edytuj
+                            </a>
+                            <a asp-action="Delete" asp-route-id="@quiz.Id" class="btn btn-outline-danger">
+                                Usuń
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}

@@ -2,8 +2,11 @@
 
 namespace QuizApplication.Models
 {
+    /// <summary>
+    /// Rozszerzony użytkownik aplikacji
+    /// </summary>
     public class ApplicationUser : IdentityUser
     {
-        public virtual ICollection<Quiz> Quizzes { get; set; } = new List<Quiz>();  
+        public virtual ICollection<Quiz> Quizzes { get; set; } = new List<Quiz>();
     }
 }

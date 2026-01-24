@@ -1,34 +1,50 @@
-﻿@model QuizApplication.Models.ViewModels.CreateQuizViewModel
+﻿@model QuizApplication.DTOs.QuizDtos.CreateQuizDto
 
 @{
-    ViewData["Title"] = "Create";
+    ViewData["Title"] = "Utwórz Quiz";
 }
 
-<h1>Create</h1>
+<h1 class="mb-4">Utwórz nowy quiz</h1>
 
-<h4>Quiz</h4>
-<hr />
 <div class="row">
-    <div class="col-md-4">
-        <form asp-action="Create" method="post">
-            <div asp-validation-summary="ModelOnly" class="text-danger"></div>
-            @Html.AntiForgeryToken()
-            <div class="form-group">
-                <label asp-for="Title" class="control-label"></label>
-                <input asp-for="Title" class="form-control" />
-                <span asp-validation-for="Title" class="text-danger"></span>
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <form asp-action="Create" method="post">
+                    <div asp-validation-summary="ModelOnly" class="alert alert-danger"></div>
+
+                    <div class="mb-3">
+                        <label asp-for="Title" class="form-label fw-bold"></label>
+                        <input asp-for="Title" class="form-control form-control-lg"
+                               placeholder="np. Quiz z geografii" autofocus />
+                        <span asp-validation-for="Title" class="text-danger"></span>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-success">
+                            Utwórz quiz
+                        </button>
+                        <a asp-action="Index" class="btn btn-secondary">
+                            Anuluj
+                        </a>
+                    </div>
+                </form>
             </div>
-            <div class="form-group">
-                <input type="submit" value="Create" class="btn btn-primary" />
-            </div>
-        </form>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="alert alert-info">
+            <h5>Wskazówka</h5>
+            <p class="mb-0">
+                Po utworzeniu quizu będziesz mógł dodać do niego pytania z odpowiedziami.
+                Kod dostępu zostanie wygenerowany automatycznie.
+            </p>
+        </div>
     </div>
 </div>
 
-<div>
-    <a asp-action="Index">Back to List</a>
-</div>
-
 @section Scripts {
-    @{await Html.RenderPartialAsync("_ValidationScriptsPartial");}
+    @{
+        await Html.RenderPartialAsync("_ValidationScriptsPartial");
+    }
 }

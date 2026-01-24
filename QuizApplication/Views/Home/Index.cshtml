@@ -2,7 +2,46 @@
     ViewData["Title"] = "Strona główna";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p> <a href="Quizzes/Index">Twoje Quizy</a>.</p>
+<div class="text-center py-5">
+    <h1 class="display-4 mb-4">🎯 Witaj w Aplikacji Quizowej!</h1>
+    <p class="lead text-muted mb-5">
+        Twórz własne quizy, dodawaj pytania i baw się dobrze!
+    </p>
+
+    @if (User.Identity?.IsAuthenticated ?? false)
+    {
+        <div class="row justify-content-center">
+            <div class="col-md-4 mb-3">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">📝 Moje Quizy</h5>
+                        <p class="card-text text-muted">Przeglądaj i zarządzaj swoimi quizami</p>
+                        <a asp-controller="Quizzes" asp-action="Index" class="btn btn-primary">
+                            Przejdź do quizów
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4 mb-3">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">➕ Nowy Quiz</h5>
+                        <p class="card-text text-muted">Utwórz nowy quiz od podstaw</p>
+                        <a asp-controller="Quizzes" asp-action="Create" class="btn btn-success">
+                            Utwórz quiz
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="alert alert-info d-inline-block">
+            <a asp-area="Identity" asp-page="/Account/Login">Zaloguj się</a>
+            lub
+            <a asp-area="Identity" asp-page="/Account/Register">zarejestruj</a>,
+            aby tworzyć własne quizy!
+        </div>
+    }
 </div>

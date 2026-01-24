@@ -8,43 +8,40 @@ using System.Threading.Tasks;
 
 namespace QuizApplication.Services
 {
-    
-        /// <summary>
-        /// Interfejs serwisu zarządzającego quizami
+    /// <summary>
+        /// Serwis do zarządzania quizami
         /// </summary>
         public interface IQuizService
         {
             /// <summary>
             /// Tworzy nowy quiz
             /// </summary>
-            Task<OperationResult<QuizDetailsDto>> CreateQuizAsync(CreateQuizDto dto);
+            Task<OperationResult<QuizDetailsDto>> CreateAsync(CreateQuizDto dto);
 
             /// <summary>
-            /// Pobiera szczegóły quizu wraz z pytaniami i odpowiedziami
+            /// Pobiera szczegóły quizu wraz z pytaniami
             /// </summary>
-            Task<OperationResult<QuizDetailsDto>> GetQuizDetailsAsync(int id);
+            Task<OperationResult<QuizDetailsDto>> GetByIdAsync(int id);
 
             /// <summary>
-            /// Pobiera wszystkie quizy należące do użytkownika
+            /// Pobiera listę quizów użytkownika
             /// </summary>
-            Task<OperationResult<List<QuizSummaryDto>>> GetAllQuizzesForUserAsync(string userId);
+            Task<OperationResult<List<QuizListDto>>> GetAllForUserAsync(string userId);
 
             /// <summary>
-            /// Aktualizuje tytuł quizu
+            /// Aktualizuje quiz
             /// </summary>
-            Task<OperationResult> UpdateQuizTitleAsync(UpdateQuizDto dto, string userId, bool isAdmin);
+            Task<OperationResult> UpdateAsync(EditQuizDto dto, string userId, bool isAdmin);
 
             /// <summary>
-            /// Usuwa quiz wraz ze wszystkimi pytaniami i odpowiedziami
+            /// Usuwa quiz
             /// </summary>
-            Task<OperationResult> DeleteQuizAsync(int quizId, string userId, bool isAdmin);
+            Task<OperationResult> DeleteAsync(int quizId, string userId, bool isAdmin);
 
             /// <summary>
-            /// Sprawdza czy użytkownik jest właścicielem quizu lub administratorem
+            /// Sprawdza czy użytkownik jest właścicielem lub adminem
             /// </summary>
             Task<bool> IsOwnerOrAdminAsync(int quizId, string userId, bool isAdmin);
-
-
-
         }
-}
+    }
+

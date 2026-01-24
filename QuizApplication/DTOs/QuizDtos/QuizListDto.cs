@@ -1,6 +1,9 @@
 ﻿namespace QuizApplication.DTOs.QuizDtos
 {
-    public class QuizSummaryDto // Do listy quizów (lżejszy obiekt)
+    /// <summary>
+    /// DTO do listy quizów (wersja skrócona)
+    /// </summary>
+    public class QuizListDto
     {
         public int Id { get; set; }
         public string Title { get; set; } = string.Empty;

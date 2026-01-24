@@ -1,34 +1,40 @@
-﻿@model QuizApplication.Models.ViewModels.EditQuizViewModel
-
+﻿@model QuizApplication.DTOs.QuizDtos.EditQuizDto
 @{
-    ViewData["Title"] = "Edytuj Quiz";
+    ViewData["Title"] = "Edytuj quiz";
 }
 
-<h1>Edytuj</h1>
+<h1 class="mb-4">Edytuj quiz</h1>
 
-<h4>Quiz</h4>
-<hr />
 <div class="row">
-    <div class="col-md-4">
-        <form asp-action="Edit">
-            <div asp-validation-summary="ModelOnly" class="text-danger"></div>
-            <input type="hidden" asp-for="Id" />
-            <div class="form-group">
-                <label asp-for="Title" class="control-label"></label>
-                <input asp-for="Title" class="form-control" />
-                <span asp-validation-for="Title" class="text-danger"></span>
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <form asp-action="Edit" method="post">
+                    <div asp-validation-summary="ModelOnly" class="alert alert-danger"></div>
+                    <input type="hidden" asp-for="Id" />
+
+                    <div class="mb-3">
+                        <label asp-for="Title" class="form-label fw-bold"></label>
+                        <input asp-for="Title" class="form-control form-control-lg" autofocus />
+                        <span asp-validation-for="Title" class="text-danger"></span>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            Zapisz zmiany
+                        </button>
+                        <a asp-action="Details" asp-route-id="@Model.Id" class="btn btn-secondary">
+                            Anuluj
+                        </a>
+                    </div>
+                </form>
             </div>
-            <div class="form-group">
-                <input type="submit" value="Save" class="btn btn-primary" />
-                <a asp-action="Index">Anuluj</a>
-            </div>
-        </form>
+        </div>
     </div>
 </div>
 
-
-
 @section Scripts {
-    @{await Html.RenderPartialAsync("_ValidationScriptsPartial");}
+    @{
+        await Html.RenderPartialAsync("_ValidationScriptsPartial");
+    }
 }
-

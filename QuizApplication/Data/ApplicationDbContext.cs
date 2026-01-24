@@ -18,24 +18,37 @@ namespace QuizApplication.Data
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);
+            // Quiz -> Właściciel
             builder.Entity<Quiz>()
                 .HasOne(q => q.Owner)
                 .WithMany(u => u.Quizzes)
                 .HasForeignKey(q => q.OwnerId)
                 .OnDelete(DeleteBehavior.SetNull);
 
-            // Question -> Answers : kaskadowe usuwanie
-            builder.Entity<Question>().HasMany(q => q.Answers).WithOne(a => a.Question).HasForeignKey(a => a.QuestionId).OnDelete(DeleteBehavior.Cascade);
+            // Quiz -> Pytania (kaskadowe usuwanie)
+            builder.Entity<Quiz>()
+                .HasMany(q => q.Questions)
+                .WithOne(q => q.Quiz)
+                .HasForeignKey(q => q.QuizId)
+                .OnDelete(DeleteBehavior.Cascade);
 
-            // Unikatowy index na AccessCode
+            // Pytanie -> Odpowiedzi (kaskadowe usuwanie)
+            builder.Entity<Question>()
+                .HasMany(q => q.Answers)
+                .WithOne(a => a.Question)
+                .HasForeignKey(a => a.QuestionId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Unikalny indeks na AccessCode
             builder.Entity<Quiz>()
                 .HasIndex(q => q.AccessCode)
                 .IsUnique();
 
-            // Dodatkowe limity długości (opcjonalnie)
-            builder.Entity<Answer>().Property(a => a.Content).HasMaxLength(1000);
+            // Limity długości
+            builder.Entity<Quiz>().Property(q => q.Title).HasMaxLength(200);
+            builder.Entity<Quiz>().Property(q => q.AccessCode).HasMaxLength(6);
             builder.Entity<Question>().Property(q => q.Content).HasMaxLength(2000);
-            builder.Entity<Quiz>().Property(q => q.Title).HasMaxLength(250);
+            builder.Entity<Answer>().Property(a => a.Content).HasMaxLength(1000);
         }
 
     }

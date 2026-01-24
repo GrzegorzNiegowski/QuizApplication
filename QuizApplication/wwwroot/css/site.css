@@ -1,22 +1,128 @@
+/* ============================================
+   APLIKACJA QUIZOWA - STYLE CSS
+   ============================================ */
+
+/* === OGÓLNE === */
 html {
-  font-size: 14px;
+    font-size: 14px;
 }
 
 @media (min-width: 768px) {
-  html {
-    font-size: 16px;
-  }
-}
-
-.btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
-  box-shadow: 0 0 0 0.1rem white, 0 0 0 0.25rem #258cfb;
-}
-
-html {
-  position: relative;
-  min-height: 100%;
+    html {
+        font-size: 16px;
+    }
 }
 
 body {
-  margin-bottom: 60px;
+    background-color: #f8f9fa;
+}
+
+/* === NAG£ÓWEK === */
+.navbar-brand {
+    font-size: 1.4rem;
+}
+
+/* === KARTY === */
+.card {
+    border: none;
+    border-radius: 12px;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+    .card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1) !important;
+    }
+
+.card-header {
+    border-radius: 12px 12px 0 0 !important;
+    border-bottom: none;
+}
+
+/* === PRZYCISKI === */
+.btn {
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+    .btn:hover {
+        transform: translateY(-1px);
+    }
+
+.btn-lg {
+    padding: 0.75rem 1.5rem;
+}
+
+/* === FORMULARZE === */
+.form-control {
+    border-radius: 8px;
+    border: 2px solid #dee2e6;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+    .form-control:focus {
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15);
+    }
+
+.form-check-input:checked {
+    background-color: #198754;
+    border-color: #198754;
+}
+
+/* === BADGE === */
+.badge {
+    font-weight: 500;
+    padding: 0.5em 0.8em;
+}
+
+/* === ALERTY === */
+.alert {
+    border-radius: 12px;
+    border: none;
+}
+
+/* === STOPKA === */
+.footer {
+    background-color: #f8f9fa;
+}
+
+/* === ANIMACJE === */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.card, .alert {
+    animation: fadeIn 0.3s ease-out;
+}
+
+/* === ODPOWIEDZI W QUIZIE === */
+.border-success {
+    border-width: 2px !important;
+}
+
+/* === SELEKCJA TEKSTU === */
+.user-select-all {
+    cursor: pointer;
+}
+
+/* === RESPONSYWNOŒÆ === */
+@media (max-width: 576px) {
+    .btn-group {
+        flex-direction: column;
+    }
+
+        .btn-group .btn {
+            border-radius: 8px !important;
+            margin-bottom: 0.25rem;
+        }
 }

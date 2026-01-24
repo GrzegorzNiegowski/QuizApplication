@@ -1,54 +1,93 @@
-﻿@model QuizApplication.Models.ViewModels.CreateQuestionViewModel
+﻿@model QuizApplication.DTOs.QuestionDtos.CreateQuestionDto
 
 @{
     ViewData["Title"] = "Dodaj pytanie";
 }
 
-<h2>Dodaj pytanie do quizu: @ViewBag.QuizTitle</h2>
+<h1 class="mb-2">Dodaj pytanie</h1>
+<p class="text-muted mb-4">Quiz: <strong>@ViewBag.QuizTitle</strong></p>
 
-<form asp-action="Create" method="post" enctype="multipart/form-data">
-    @Html.AntiForgeryToken()
+<form asp-action="Create" method="post">
+    <div asp-validation-summary="ModelOnly" class="alert alert-danger"></div>
     <input type="hidden" asp-for="QuizId" />
 
-    <div class="form-group">
-        <label>Obrazek (opcjonalnie)</label>
-        <input type="file" name="file" class="form-control" accept="image/*" />
-    </div>
-
-    <div class="form-group">
-        <label asp-for="Content"></label>
-        <textarea asp-for="Content" class="form-control" rows="3"></textarea>
-        <span asp-validation-for="Content" class="text-danger"></span>
-    </div>
-
-    <div class="form-group">
-        <label asp-for="TimeLimitSeconds"></label>
-        <input asp-for="TimeLimitSeconds" class="form-control" />
-        <span asp-validation-for="TimeLimitSeconds" class="text-danger"></span>
-    </div>
-
-    <hr />
-    <h4>Odpowiedzi (wprowadź treść i zaznacz poprawne)</h4>
-
-    @for (int i = 0; i < Model.Answers.Count; i++)
-    {
-        <div class="form-group">
-            <label>Odpowiedź @(i + 1)</label>
-            <input asp-for="Answers[@i].Content" class="form-control" />
-            <div class="form-check" style="margin-top:6px;">
-                <input asp-for="Answers[@i].IsCorrect" class="form-check-input" />
-                <label class="form-check-label">Poprawna</label>
-            </div>
-            <span asp-validation-for="Answers[@i].Content" class="text-danger"></span>
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <strong>Treść pytania</strong>
         </div>
-    }
+        <div class="card-body">
+            <div class="mb-3">
+                <textarea asp-for="Content" class="form-control" rows="3"
+                          placeholder="Wpisz treść pytania..." autofocus></textarea>
+                <span asp-validation-for="Content" class="text-danger"></span>
+            </div>
 
-    <div asp-validation-summary="ModelOnly" class="text-danger"></div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label asp-for="TimeLimitSeconds" class="form-label"></label>
+                    <div class="input-group">
+                        <input asp-for="TimeLimitSeconds" type="number" class="form-control"
+                               min="5" max="300" />
+                        <span class="input-group-text">sekund</span>
+                    </div>
+                    <span asp-validation-for="TimeLimitSeconds" class="text-danger"></span>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label asp-for="Points" class="form-label"></label>
+                    <div class="input-group">
+                        <input asp-for="Points" type="number" class="form-control"
+                               min="0" max="5000" />
+                        <span class="input-group-text">punktów</span>
+                    </div>
+                    <span asp-validation-for="Points" class="text-danger"></span>
+                </div>
+            </div>
+        </div>
+    </div>
 
-    <button type="submit" class="btn btn-primary">Zapisz i dodaj następne</button>
-    <button type="submit" name="submit" value="finish" class="btn btn-success">Zakończ i pokaż quiz</button>
+    <div class="card mb-4">
+        <div class="card-header bg-success text-white">
+            <strong>Odpowiedzi</strong>
+            <small class="ms-2">(zaznacz poprawne)</small>
+        </div>
+        <div class="card-body">
+            @for (int i = 0; i < Model.Answers.Count; i++)
+            {
+                <div class="mb-3 p-3 border rounded @(i % 2 == 0 ? "bg-light" : "")">
+                    <div class="row align-items-center">
+                        <div class="col">
+                            <label class="form-label fw-bold">Odpowiedź @(i + 1)</label>
+                            <input asp-for="Answers[i].Content" class="form-control"
+                                   placeholder="Wpisz treść odpowiedzi..." />
+                        </div>
+                        <div class="col-auto pt-4">
+                            <div class="form-check form-switch">
+                                <input asp-for="Answers[i].IsCorrect" class="form-check-input"
+                                       style="width: 3em; height: 1.5em;" />
+                                <label class="form-check-label text-success fw-bold">Poprawna</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+            <p class="text-muted small mb-0">
+                Możesz zostawić niektóre odpowiedzi puste - zostaną pominięte.
+            </p>
+        </div>
+    </div>
 
-    <a asp-controller="Quizzes" asp-action="Details" asp-route-id="@Model.QuizId" class="btn btn-secondary">Anuluj i wróć</a>
+    <div class="d-flex gap-2 flex-wrap">
+        <button type="submit" class="btn btn-primary btn-lg">
+            Zapisz i dodaj następne
+        </button>
+        <button type="submit" name="action" value="finish" class="btn btn-success btn-lg">
+            Zapisz i zakończ
+        </button>
+        <a asp-controller="Quizzes" asp-action="Details" asp-route-id="@Model.QuizId"
+           class="btn btn-secondary btn-lg">
+            Anuluj
+        </a>
+    </div>
 </form>
 
 @section Scripts {

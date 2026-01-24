@@ -8,6 +8,9 @@ using QuizApplication.Validation;
 
 namespace QuizApplication.Services
 {
+    /// <summary>
+    /// Implementacja serwisu do zarządzania pytaniami
+    /// </summary>
     public class QuestionService : IQuestionService
     {
         private readonly ApplicationDbContext _context;
@@ -19,16 +22,19 @@ namespace QuizApplication.Services
             _quizService = quizService;
         }
 
-        public async Task<OperationResult> AddQuestionAsync(CreateQuestionDto dto, string userId, bool isAdmin)
+        public async Task<OperationResult> CreateAsync(CreateQuestionDto dto, string userId, bool isAdmin)
         {
+            // Walidacja danych wejściowych
             var errors = DtoValidators.ValidateCreateQuestion(dto);
             if (errors.Any())
                 return OperationResult.Fail(errors.ToArray());
 
+            // Sprawdzenie uprawnień
             if (!await _quizService.IsOwnerOrAdminAsync(dto.QuizId, userId, isAdmin))
-                return OperationResult.Fail("Brak uprawnień.");
+                return OperationResult.Fail("Brak uprawnień do dodawania pytań do tego quizu");
 
-            var validAnswers = dto.Answers
+            // Filtrowanie niepustych odpowiedzi
+            var answers = dto.Answers
                 .Where(a => !string.IsNullOrWhiteSpace(a.Content))
                 .Select(a => new Answer
                 {
@@ -37,14 +43,14 @@ namespace QuizApplication.Services
                 })
                 .ToList();
 
+            // Tworzenie nowego pytania
             var question = new Question
             {
                 QuizId = dto.QuizId,
                 Content = dto.Content.Trim(),
                 TimeLimitSeconds = dto.TimeLimitSeconds,
                 Points = dto.Points,
-                ImageUrl = dto.ImageUrl,
-                Answers = validAnswers
+                Answers = answers
             };
 
             _context.Questions.Add(question);
@@ -53,18 +59,20 @@ namespace QuizApplication.Services
             return OperationResult.Ok();
         }
 
-        public async Task<OperationResult<EditQuestionDto>> GetQuestionForEditAsync(int questionId, string userId, bool isAdmin)
+        public async Task<OperationResult<EditQuestionDto>> GetForEditAsync(int questionId, string userId, bool isAdmin)
         {
             var question = await _context.Questions
-                .Include(x => x.Answers)
-                .FirstOrDefaultAsync(x => x.Id == questionId);
+                .Include(q => q.Answers)
+                .FirstOrDefaultAsync(q => q.Id == questionId);
 
             if (question == null)
-                return OperationResult<EditQuestionDto>.Fail("Nie znaleziono pytania.");
+                return OperationResult<EditQuestionDto>.Fail("Nie znaleziono pytania");
 
+            // Sprawdzenie uprawnień
             if (!await _quizService.IsOwnerOrAdminAsync(question.QuizId, userId, isAdmin))
-                return OperationResult<EditQuestionDto>.Fail("Brak uprawnień.");
+                return OperationResult<EditQuestionDto>.Fail("Brak uprawnień do edycji tego pytania");
 
+            // Mapowanie encji na DTO
             var dto = new EditQuestionDto
             {
                 QuestionId = question.Id,
@@ -72,8 +80,7 @@ namespace QuizApplication.Services
                 Content = question.Content,
                 TimeLimitSeconds = question.TimeLimitSeconds,
                 Points = question.Points,
-                ImageUrl = question.ImageUrl,
-                Answers = question.Answers.Select(a => new EditAnswerDto
+                Answers = question.Answers.Select(a => new AnswerDto
                 {
                     Id = a.Id,
                     Content = a.Content,
@@ -84,33 +91,34 @@ namespace QuizApplication.Services
             return OperationResult<EditQuestionDto>.Ok(dto);
         }
 
-        public async Task<OperationResult> UpdateQuestionAsync(EditQuestionDto dto, string userId, bool isAdmin)
+        public async Task<OperationResult> UpdateAsync(EditQuestionDto dto, string userId, bool isAdmin)
         {
+            // Walidacja danych wejściowych
             var errors = DtoValidators.ValidateEditQuestion(dto);
             if (errors.Any())
                 return OperationResult.Fail(errors.ToArray());
 
             var question = await _context.Questions
-                .Include(x => x.Answers)
-                .FirstOrDefaultAsync(x => x.Id == dto.QuestionId);
+                .Include(q => q.Answers)
+                .FirstOrDefaultAsync(q => q.Id == dto.QuestionId);
 
             if (question == null)
-                return OperationResult.Fail("Nie znaleziono pytania.");
+                return OperationResult.Fail("Nie znaleziono pytania");
 
-            // Zabezpieczenie przed manipulacją dto.QuizId w żądaniu
+            // Zabezpieczenie przed manipulacją QuizId
             if (question.QuizId != dto.QuizId)
-                return OperationResult.Fail("Niespójny identyfikator quizu dla pytania.");
+                return OperationResult.Fail("Niespójny identyfikator quizu");
 
+            // Sprawdzenie uprawnień
             if (!await _quizService.IsOwnerOrAdminAsync(question.QuizId, userId, isAdmin))
-                return OperationResult.Fail("Brak uprawnień.");
+                return OperationResult.Fail("Brak uprawnień do edycji tego pytania");
 
-            // Aktualizacja właściwości pytania
+            // Aktualizacja pól pytania
             question.Content = dto.Content.Trim();
             question.TimeLimitSeconds = dto.TimeLimitSeconds;
             question.Points = dto.Points;
-            question.ImageUrl = dto.ImageUrl;
 
-            // Usunięcie starych odpowiedzi i dodanie nowych
+            // Usunięcie starych i dodanie nowych odpowiedzi
             _context.Answers.RemoveRange(question.Answers);
 
             var newAnswers = dto.Answers
@@ -120,7 +128,8 @@ namespace QuizApplication.Services
                     QuestionId = question.Id,
                     Content = a.Content.Trim(),
                     IsCorrect = a.IsCorrect
-                }).ToList();
+                })
+                .ToList();
 
             _context.Answers.AddRange(newAnswers);
             await _context.SaveChangesAsync();
@@ -128,29 +137,28 @@ namespace QuizApplication.Services
             return OperationResult.Ok();
         }
 
-        public async Task<OperationResult> DeleteQuestionAsync(int questionId, string userId, bool isAdmin)
+        public async Task<OperationResult> DeleteAsync(int questionId, string userId, bool isAdmin)
         {
             if (questionId <= 0)
-                return OperationResult.Fail("Nieprawidłowy identyfikator pytania.");
+                return OperationResult.Fail("Nieprawidłowy identyfikator pytania");
 
             var question = await _context.Questions
-                .Include(x => x.Answers)
-                .FirstOrDefaultAsync(x => x.Id == questionId);
+                .Include(q => q.Answers)
+                .FirstOrDefaultAsync(q => q.Id == questionId);
 
             if (question == null)
-                return OperationResult.Fail("Nie znaleziono pytania.");
+                return OperationResult.Fail("Nie znaleziono pytania");
 
+            // Sprawdzenie uprawnień
             if (!await _quizService.IsOwnerOrAdminAsync(question.QuizId, userId, isAdmin))
-                return OperationResult.Fail("Brak uprawnień.");
+                return OperationResult.Fail("Brak uprawnień do usunięcia tego pytania");
 
+            // Usunięcie pytania wraz z odpowiedziami
             _context.Answers.RemoveRange(question.Answers);
             _context.Questions.Remove(question);
             await _context.SaveChangesAsync();
 
             return OperationResult.Ok();
         }
-
-
-
     }
 }

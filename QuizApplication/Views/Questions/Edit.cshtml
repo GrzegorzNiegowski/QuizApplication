@@ -1,52 +1,87 @@
-﻿@model QuizApplication.Models.ViewModels.EditQuestionViewModel
+﻿@model QuizApplication.DTOs.QuestionDtos.EditQuestionDto
 
 @{
     ViewData["Title"] = "Edytuj pytanie";
 }
 
-<h2>Edytuj pytanie — @ViewBag.QuizTitle</h2>
+<h1 class="mb-2">✏️ Edytuj pytanie</h1>
+<p class="text-muted mb-4">Quiz: <strong>@ViewBag.QuizTitle</strong></p>
 
 <form asp-action="Edit" method="post">
-    @Html.AntiForgeryToken()
+    <div asp-validation-summary="ModelOnly" class="alert alert-danger"></div>
     <input type="hidden" asp-for="QuestionId" />
     <input type="hidden" asp-for="QuizId" />
 
-    <div class="form-group">
-        <label asp-for="Content"></label>
-        <textarea asp-for="Content" class="form-control" rows="3"></textarea>
-        <span asp-validation-for="Content" class="text-danger"></span>
-    </div>
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <strong>Treść pytania</strong>
+        </div>
+        <div class="card-body">
+            <div class="mb-3">
+                <textarea asp-for="Content" class="form-control" rows="3"></textarea>
+                <span asp-validation-for="Content" class="text-danger"></span>
+            </div>
 
-    <div class="form-group">
-        <label asp-for="TimeLimitSeconds"></label>
-        <input asp-for="TimeLimitSeconds" class="form-control" />
-        <span asp-validation-for="TimeLimitSeconds" class="text-danger"></span>
-    </div>
-
-    <div class="form-group">
-        <label asp-for="Points"></label>
-        <input asp-for="Points" class="form-control" />
-        <span asp-validation-for="Points" class="text-danger"></span>
-    </div>
-
-    <hr />
-    <h4>Odpowiedzi</h4>
-    @for (int i = 0; i < Model.Answers.Count; i++)
-    {
-        <div class="mb-2">
-            <input type="hidden" asp-for="Answers[@i].Id" />
-            <input asp-for="Answers[@i].Content" class="form-control" />
-            <div class="form-check">
-                <input asp-for="Answers[@i].IsCorrect" class="form-check-input" />
-                <label class="form-check-label">Poprawna</label>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label asp-for="TimeLimitSeconds" class="form-label"></label>
+                    <div class="input-group">
+                        <input asp-for="TimeLimitSeconds" type="number" class="form-control"
+                               min="5" max="300" />
+                        <span class="input-group-text">sekund</span>
+                    </div>
+                    <span asp-validation-for="TimeLimitSeconds" class="text-danger"></span>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label asp-for="Points" class="form-label"></label>
+                    <div class="input-group">
+                        <input asp-for="Points" type="number" class="form-control"
+                               min="0" max="5000" />
+                        <span class="input-group-text">punktów</span>
+                    </div>
+                    <span asp-validation-for="Points" class="text-danger"></span>
+                </div>
             </div>
         </div>
-    }
+    </div>
 
-    <div asp-validation-summary="ModelOnly" class="text-danger"></div>
+    <div class="card mb-4">
+        <div class="card-header bg-success text-white">
+            <strong>Odpowiedzi</strong>
+            <small class="ms-2">(zaznacz poprawne)</small>
+        </div>
+        <div class="card-body">
+            @for (int i = 0; i < Model.Answers.Count; i++)
+            {
+                <div class="mb-3 p-3 border rounded @(i % 2 == 0 ? "bg-light" : "")">
+                    <input type="hidden" asp-for="Answers[i].Id" />
+                    <div class="row align-items-center">
+                        <div class="col">
+                            <label class="form-label fw-bold">Odpowiedź @(i + 1)</label>
+                            <input asp-for="Answers[i].Content" class="form-control" />
+                        </div>
+                        <div class="col-auto pt-4">
+                            <div class="form-check form-switch">
+                                <input asp-for="Answers[i].IsCorrect" class="form-check-input"
+                                       style="width: 3em; height: 1.5em;" />
+                                <label class="form-check-label text-success fw-bold">Poprawna</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
 
-    <button type="submit" class="btn btn-primary">Zapisz</button>
-    <a asp-controller="Quizzes" asp-action="Details" asp-route-id="@Model.QuizId" class="btn btn-secondary">Anuluj</a>
+    <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-lg">
+            Zapisz zmiany
+        </button>
+        <a asp-controller="Quizzes" asp-action="Details" asp-route-id="@Model.QuizId"
+           class="btn btn-secondary btn-lg">
+            Anuluj
+        </a>
+    </div>
 </form>
 
 @section Scripts {

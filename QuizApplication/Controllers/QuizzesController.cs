@@ -9,6 +9,9 @@ using System.Security.Claims;
 
 namespace QuizApplication.Controllers
 {
+    /// <summary>
+    /// Kontroler do zarządzania quizami
+    /// </summary>
     [Authorize]
     public class QuizzesController : Controller
     {
@@ -19,131 +22,136 @@ namespace QuizApplication.Controllers
             _quizService = quizService;
         }
 
-
-
-        //Wszystkie quizy
-        
+        /// <summary>
+        /// Wyświetla listę quizów użytkownika
+        /// </summary>
         public async Task<IActionResult> Index()
         {
             if (!User.Identity?.IsAuthenticated ?? true)
-                return View(new List<QuizSummaryDto>());
+                return View(new List<QuizListDto>());
 
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            var result = await _quizService.GetAllQuizzesForUserAsync(userId);
-            return View(result.Data);
+            var result = await _quizService.GetAllForUserAsync(GetUserId());
+            return View(result.Data ?? new List<QuizListDto>());
         }
 
-        // GET: /Quizzes/Details/5
-        
+        /// <summary>
+        /// Wyświetla szczegóły quizu
+        /// </summary>
         public async Task<IActionResult> Details(int id)
         {
-            var result = await _quizService.GetQuizDetailsAsync(id);
-            if (!result.Success) return NotFound();
+            var result = await _quizService.GetByIdAsync(id);
+            if (!result.Success)
+                return NotFound();
 
-            // Wysyłamy do widoku DTO
             return View(result.Data);
         }
 
-        // GET: /Quizzes/Create
+        /// <summary>
+        /// Formularz tworzenia quizu (GET)
+        /// </summary>
         public IActionResult Create()
         {
-            return View(new CreateQuizViewModel());
+            return View(new CreateQuizDto());
         }
 
-        // POST: /Quizzes/Create
+        /// <summary>
+        /// Tworzenie quizu (POST)
+        /// </summary>
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> Create(CreateQuizViewModel vm)
+        public async Task<IActionResult> Create(CreateQuizDto dto)
         {
-            if (!ModelState.IsValid) return View(vm);
+            if (!ModelState.IsValid)
+                return View(dto);
 
-            var dto = new CreateQuizDto
-            {
-                Title = vm.Title,
-                OwnerId = User.FindFirstValue(ClaimTypes.NameIdentifier)!
-            };
-
-            var result = await _quizService.CreateQuizAsync(dto);
+            dto.OwnerId = GetUserId();
+            var result = await _quizService.CreateAsync(dto);
 
             if (!result.Success)
             {
-                result.Errors.ForEach(e => ModelState.AddModelError("", e));
-                return View(vm);
+                foreach (var error in result.Errors)
+                    ModelState.AddModelError("", error);
+                return View(dto);
             }
 
             return RedirectToAction(nameof(Details), new { id = result.Data!.Id });
         }
 
-        // GET: /Quizzes/Edit/5
+        /// <summary>
+        /// Formularz edycji quizu (GET)
+        /// </summary>
         public async Task<IActionResult> Edit(int id)
         {
-            var result = await _quizService.GetQuizDetailsAsync(id);
-            if (!result.Success) return NotFound();
+            var result = await _quizService.GetByIdAsync(id);
+            if (!result.Success)
+                return NotFound();
 
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            if (!await _quizService.IsOwnerOrAdminAsync(id, userId, User.IsInRole("Admin")))
+            if (!await _quizService.IsOwnerOrAdminAsync(id, GetUserId(), IsAdmin()))
                 return Forbid();
 
-            // Przepisanie DTO -> ViewModel
-            var vm = new EditQuizViewModel
-            {
-                Id = result.Data!.Id,
-                Title = result.Data.Title
-            };
-
-            return View(vm);
+            return View(new EditQuizDto { Id = result.Data!.Id, Title = result.Data.Title });
         }
 
-        // POST: /Quizzes/Edit/5
+        /// <summary>
+        /// Edycja quizu (POST)
+        /// </summary>
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> Edit(int id, EditQuizViewModel vm)
+        public async Task<IActionResult> Edit(int id, EditQuizDto dto)
         {
-            if (id != vm.Id) return BadRequest();
-            if (!ModelState.IsValid) return View(vm);
+            if (id != dto.Id)
+                return BadRequest();
 
-            var dto = new UpdateQuizDto
-            {
-                Id = vm.Id,
-                Title = vm.Title
-            };
+            if (!ModelState.IsValid)
+                return View(dto);
 
-            var result = await _quizService.UpdateQuizTitleAsync(dto, User.FindFirstValue(ClaimTypes.NameIdentifier)!, User.IsInRole("Admin"));
+            var result = await _quizService.UpdateAsync(dto, GetUserId(), IsAdmin());
 
             if (!result.Success)
             {
-                result.Errors.ForEach(e => ModelState.AddModelError("", e));
-                return View(vm);
+                foreach (var error in result.Errors)
+                    ModelState.AddModelError("", error);
+                return View(dto);
             }
 
-            return RedirectToAction(nameof(Details), new { id = vm.Id });
+            return RedirectToAction(nameof(Details), new { id = dto.Id });
         }
 
-        // GET: /Quizzes/Delete/5
+        /// <summary>
+        /// Potwierdzenie usunięcia quizu (GET)
+        /// </summary>
         public async Task<IActionResult> Delete(int id)
         {
-            var result = await _quizService.GetQuizDetailsAsync(id);
-            if (!result.Success) return NotFound();
+            var result = await _quizService.GetByIdAsync(id);
+            if (!result.Success)
+                return NotFound();
 
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            if (!await _quizService.IsOwnerOrAdminAsync(id, userId, User.IsInRole("Admin")))
+            if (!await _quizService.IsOwnerOrAdminAsync(id, GetUserId(), IsAdmin()))
                 return Forbid();
 
-            // Widok Delete wyświetla dane, więc wysyłamy DTO
             return View(result.Data);
         }
 
-        // POST: /Quizzes/Delete/5
+        /// <summary>
+        /// Usunięcie quizu (POST)
+        /// </summary>
         [HttpPost, ActionName("Delete")]
         [ValidateAntiForgeryToken]
         public async Task<IActionResult> DeleteConfirmed(int id)
         {
-            var result = await _quizService.DeleteQuizAsync(id, User.FindFirstValue(ClaimTypes.NameIdentifier)!, User.IsInRole("Admin"));
-            if (!result.Success) return Forbid();
+            var result = await _quizService.DeleteAsync(id, GetUserId(), IsAdmin());
+            if (!result.Success)
+                return Forbid();
 
             return RedirectToAction(nameof(Index));
         }
-    }
 
+        #region Metody pomocnicze
+
+        private string GetUserId() => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+        private bool IsAdmin() => User.IsInRole("Admin");
+
+        #endregion
+    }
 
 }

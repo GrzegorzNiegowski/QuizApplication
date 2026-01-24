@@ -4,6 +4,9 @@ namespace QuizApplication.Utilities
 {
     public class OperationResult
     {
+        /// <summary>
+        /// Wynik operacji bez danych zwrotnych
+        /// </summary>
         public bool Success => !Errors.Any();
         public List<string> Errors { get; set; } = new List<string>();
 
@@ -16,6 +19,9 @@ namespace QuizApplication.Utilities
         }
     }
 
+    /// <summary>
+    /// Wynik operacji z danymi zwrotnymi
+    /// </summary>
     public class OperationResult<T> : OperationResult
     {
         public T? Data { get; set; }
