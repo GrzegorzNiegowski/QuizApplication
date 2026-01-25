@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
-using QuizApplication.Models.ViewModels;
+using QuizApplication.Models;
 
 namespace QuizApplication.Controllers
 {

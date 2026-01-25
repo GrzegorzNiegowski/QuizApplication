@@ -1,23 +1,229 @@
 ﻿@{
-    ViewData["Title"] = "Poczekalnia";
+    ViewData["Title"] = "Lobby";
+    Layout = "_GameLayout";
+    var sessionId = ViewBag.SessionId;
+    var playerId = ViewBag.PlayerId;
+    var quizTitle = ViewBag.QuizTitle;
+    var accessCode = ViewBag.AccessCode;
 }
-<div class="text-center mt-5">
-    <h1 class="display-4">Kod gry: <span class="text-primary">@ViewBag.Code</span></h1>
-    <h3>Witaj, <strong>@ViewBag.Nick</strong>!</h3>
-    <div class="spinner-border text-primary mt-3" role="status">
-        <span class="visually-hidden">Loading...</span>
-    </div>
-    <p class="mt-3 text-muted">Czekamy na rozpoczęcie gry przez gospodarza...</p>
-    <hr />
 
-    <h4>Gracze w pokoju:</h4>
-    <ul id="playersList" class="list-group list-group-flush mx-auto" style="max-width: 400px;"></ul>
+<div class="lobby-container">
+    <!-- Header -->
+    <div class="mb-4">
+        <h2 class="text-white-50 mb-2">Dołączono do:</h2>
+        <h1 class="display-5 fw-bold text-white">@quizTitle</h1>
+    </div>
+
+    <!-- Kod gry -->
+    <div class="mb-4">
+        <p class="text-white-50 mb-1">Kod gry:</p>
+        <div class="lobby-code">@accessCode</div>
+    </div>
+
+    <!-- Status połączenia -->
+    <div id="connectionStatus" class="mb-3">
+        <span class="badge bg-success">
+            <i class="bi bi-check-circle me-1"></i> Połączono
+        </span>
+    </div>
+
+    <!-- Lista graczy -->
+    <div class="mb-4">
+        <h4 class="text-white-50">
+            <i class="bi bi-people me-2"></i>
+            Gracze (<span id="playerCount">1</span>)
+        </h4>
+        <div class="player-list" id="playerList">
+            <!-- Gracze będą dodawani przez JS -->
+        </div>
+    </div>
+
+    <!-- Oczekiwanie -->
+    <div class="waiting-message">
+        <i class="bi bi-hourglass-split waiting-spinner"></i>
+        Oczekiwanie na rozpoczęcie gry przez hosta...
+    </div>
+
+    <!-- Przycisk wyjścia -->
+    <div class="mt-4">
+        <button class="btn btn-cancel" onclick="leaveGame()">
+            <i class="bi bi-box-arrow-left me-2"></i> Opuść grę
+        </button>
+    </div>
 </div>
+
 @section Scripts {
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
-    <script src="~/js/quiz-game.js"></script>
     <script>
-        const client = new QuizGameClient("@ViewBag.Code", "@ViewBag.Nick", false);
-        client.connect();
+        const sessionId = '@sessionId';
+        const playerId = '@playerId';
+        let connection = null;
+        const players = new Map();
+
+        async function initLobby() {
+            connection = new signalR.HubConnectionBuilder()
+                .withUrl("/quizHub")
+                .withAutomaticReconnect()
+                .build();
+
+            // Event handlers
+            connection.on("PlayerEvent", handlePlayerEvent);
+            connection.on("GameStarted", handleGameStarted);
+            connection.on("GameCancelled", handleGameCancelled);
+            connection.on("GameMessage", handleMessage);
+
+            connection.onreconnecting(() => {
+                updateConnectionStatus('warning', 'Ponowne łączenie...');
+            });
+
+            connection.onreconnected(async () => {
+                updateConnectionStatus('info', 'Ponowne dołączanie...');
+                // Spróbuj ponownie dołączyć
+                try {
+                    const result = await connection.invoke("ReconnectGame", '@accessCode', localStorage.getItem('quizNickname') || '');
+                    if (result.success) {
+                        updateConnectionStatus('success', 'Połączono');
+                    }
+                } catch (error) {
+                    console.error("Reconnect error:", error);
+                }
+            });
+
+            connection.onclose(() => {
+                updateConnectionStatus('danger', 'Rozłączono');
+            });
+
+            try {
+                await connection.start();
+
+                // Pobierz informacje o lobby
+                const lobbyInfo = await connection.invoke("GetLobbyInfo", sessionId);
+                if (lobbyInfo) {
+                    lobbyInfo.players.forEach(p => {
+                        players.set(p.playerId, {
+                            nickname: p.nickname,
+                            connected: p.isConnected
+                        });
+                    });
+                    updatePlayerList();
+                }
+
+                console.log("Connected to lobby");
+            } catch (error) {
+                console.error("Connection error:", error);
+                updateConnectionStatus('danger', 'Błąd połączenia');
+            }
+        }
+
+        function handlePlayerEvent(event) {
+            console.log("Player event:", event);
+
+            switch (event.eventType) {
+                case 'joined':
+                    players.set(event.playerId, {
+                        nickname: event.nickname,
+                        connected: true
+                    });
+                    if (event.playerId !== playerId) {
+                        showToast(`${event.nickname} dołączył`, 'info');
+                    }
+                    break;
+                case 'left':
+                    if (players.has(event.playerId)) {
+                        showToast(`${players.get(event.playerId).nickname} opuścił grę`, 'warning');
+                    }
+                    players.delete(event.playerId);
+                    break;
+                case 'disconnected':
+                    if (players.has(event.playerId)) {
+                        players.get(event.playerId).connected = false;
+                    }
+                    break;
+                case 'reconnected':
+                    if (players.has(event.playerId)) {
+                        players.get(event.playerId).connected = true;
+                    }
+                    break;
+            }
+
+            updatePlayerList();
+        }
+
+        function handleGameStarted() {
+            showToast('Gra się rozpoczyna!', 'success');
+            setTimeout(() => {
+                window.location.href = `/Game/Play?sessionId=${sessionId}&playerId=${playerId}`;
+            }, 500);
+        }
+
+        function handleGameCancelled(message) {
+            showToast(message.message, 'error');
+            setTimeout(() => {
+                window.location.href = '/Game/Join';
+            }, 2000);
+        }
+
+        function handleMessage(message) {
+            showToast(message.message, message.type);
+        }
+
+        function updatePlayerList() {
+            const list = document.getElementById('playerList');
+            const count = document.getElementById('playerCount');
+
+            count.textContent = players.size;
+
+            if (players.size === 0) {
+                list.innerHTML = '<div class="text-white-50">Brak graczy</div>';
+                return;
+            }
+
+            let html = '';
+            players.forEach((player, id) => {
+                const disconnectedClass = player.connected ? '' : 'disconnected';
+                const isYou = id === playerId ? ' (Ty)' : '';
+                const initial = player.nickname.charAt(0).toUpperCase();
+                html += `
+                    <div class="player-card ${disconnectedClass}">
+                        <div class="player-avatar">${initial}</div>
+                        <span>${player.nickname}${isYou}</span>
+                        ${!player.connected ? '<i class="bi bi-wifi-off text-warning ms-2"></i>' : ''}
+                    </div>
+                `;
+            });
+            list.innerHTML = html;
+        }
+
+        function updateConnectionStatus(type, text) {
+            const status = document.getElementById('connectionStatus');
+            const icon = type === 'success' ? 'check-circle' : type === 'danger' ? 'x-circle' : 'hourglass-split';
+            status.innerHTML = `<span class="badge bg-${type}"><i class="bi bi-${icon} me-1"></i> ${text}</span>`;
+        }
+
+        async function leaveGame() {
+            if (!confirm('Czy na pewno chcesz opuścić grę?')) return;
+
+            try {
+                await connection.invoke("LeaveGame", sessionId, playerId);
+            } catch (error) {
+                console.error("Leave error:", error);
+            }
+
+            window.location.href = '/Game/Join';
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `game-toast ${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.animation = 'slideIn 0.3s ease reverse';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // Init
+        initLobby();
     </script>
 }

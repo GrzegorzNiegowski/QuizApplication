@@ -1,7 +1,5 @@
 ﻿using QuizApplication.DTOs.QuestionDtos;
 using QuizApplication.DTOs.QuizDtos;
-using QuizApplication.DTOs.RealTimeDtos;
-using QuizApplication.DTOs.SessionDtos;
 using System.Text.RegularExpressions;
 
 namespace QuizApplication.Validation
@@ -176,29 +174,7 @@ namespace QuizApplication.Validation
             return errors;
         }
 
-        // ---------- REALTIME ----------
-        public static List<string> ValidateJoinSession(JoinSessionDto dto)
-        {
-            var errors = new List<string>();
-            if (dto == null) { errors.Add("Brak danych."); return errors; }
-
-            dto.SessionCode = (dto.SessionCode ?? "").Trim().ToUpperInvariant();
-            dto.PlayerName = (dto.PlayerName ?? "").Trim();
-
-            if (dto.SessionCode.Length == 0) errors.Add("Kod sesji jest wymagany.");
-            if (dto.SessionCode.Length > 12) errors.Add("Kod sesji jest zbyt długi.");
-
-            if (dto.PlayerName.Length == 0) errors.Add("Nazwa gracza jest wymagana.");
-            if (dto.PlayerName.Length > 20) errors.Add("Nazwa gracza nie może przekraczać 20 znaków.");
-
-            // bezpieczne znaki (minimalnie)
-            if (!Regex.IsMatch(dto.PlayerName, @"^[\p{L}\p{N}\s\-_\.]+$"))
-                errors.Add("Nazwa gracza zawiera niedozwolone znaki.");
-
-            return errors;
-        }
-
-
+        
 
     }
 }

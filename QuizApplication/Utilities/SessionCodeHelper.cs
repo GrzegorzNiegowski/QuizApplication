@@ -15,7 +15,7 @@
         {
             var normalized = Normalize(code);
 
-            if (normalized.Length < GameConstants.MinSessionCodeLength ||normalized.Length > GameConstants.MaxSessionCodeLength)
+            if (normalized.Length < GameConstants.AccessCodeLength ||normalized.Length > GameConstants.AccessCodeLength)
             {
                 return false;
             }

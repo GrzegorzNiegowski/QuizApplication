@@ -1,58 +1,332 @@
-﻿<!-- model QuizApplication.Models.ViewModels.PlayViewModel
-@{
-    ViewData["Title"] = "Quiz";
+﻿@{
+    ViewData["Title"] = "Gra";
+    Layout = "_GameLayout";
+    var sessionId = ViewBag.SessionId;
+    var playerId = ViewBag.PlayerId;
+    var isHost = ViewBag.IsHost;
+    var quizTitle = ViewBag.QuizTitle;
+    var totalQuestions = ViewBag.TotalQuestions;
 }
-<div class="container mt-4">
-    <div class="text-muted mb-3">
-        Kod: <strong>@Model.AccessCode</strong> |
-        Gracz: <strong>@Model.Nickname</strong>
-    </div>
 
-    <!-- Czekanie na pytanie -->
-    <div id="waitingArea" class="text-center py-5">
-        <div class="spinner-border text-primary" role="status"></div>
-        <p class="mt-3">Ładowanie pytania...</p>
+<!-- Game Header -->
+<div class="game-header">
+    <div class="question-counter">
+        <span id="questionNumber">-</span> / <span id="totalQuestions">@totalQuestions</span>
     </div>
-
-    <!-- Obszar pytania -->
-    <div id="questionArea" style="display:none;">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <span id="progress" class="text-muted"></span>
-                <span class="badge bg-primary fs-5">
-                    <span id="timer">--</span>s
-                </span>
-            </div>
-            <div class="card-body">
-                <h4 id="questionText" class="card-title mb-4"></h4>
-                <div id="answers"></div>
-                <p id="answerStatus" class="mt-3 text-center text-muted"></p>
-            </div>
-        </div>
+    <div class="text-center">
+        <span class="text-white-50">@quizTitle</span>
     </div>
-
-    <!-- Wyniki końcowe -->
-    <div id="resultsArea" style="display:none;">
-        <div class="card">
-            <div class="card-header bg-success text-white">
-                <h4 class="mb-0">🎉 Koniec quizu!</h4>
-            </div>
-            <div class="card-body">
-                <h5>Wyniki:</h5>
-                <ul id="scoreboard" class="list-group"></ul>
-                <div class="text-center mt-4">
-                    <a href="/Game/Join" class="btn btn-primary">Dołącz do kolejnej gry</a>
-                </div>
-            </div>
-        </div>
+    <div class="timer-container">
+        <svg class="timer-circle" width="80" height="80">
+            <circle class="timer-circle-bg" cx="40" cy="40" r="34"></circle>
+            <circle class="timer-circle-progress" id="timerProgress" cx="40" cy="40" r="34"
+                    stroke-dasharray="213.6" stroke-dashoffset="0"></circle>
+        </svg>
+        <span class="timer-text" id="timerText">--</span>
     </div>
 </div>
 
+<!-- Main Content -->
+<div class="question-container" id="questionContainer">
+    <div class="waiting-container">
+        <i class="bi bi-hourglass-split waiting-icon"></i>
+        <p class="waiting-text">Przygotuj się...</p>
+    </div>
+</div>
+
+<!-- Host Panel (tylko dla hosta) -->
+@if (isHost)
+{
+    <div class="host-panel" id="hostPanel" style="display: none;">
+        <div class="host-stats">
+            <div class="host-stat">
+                <div class="host-stat-value" id="answeredCount">0</div>
+                <div class="host-stat-label">Odpowiedziało</div>
+            </div>
+            <div class="host-stat">
+                <div class="host-stat-value" id="totalPlayers">0</div>
+                <div class="host-stat-label">Graczy</div>
+            </div>
+        </div>
+    </div>
+}
+
 @section Scripts {
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
-    <script src="~/js/quiz-game.js"></script>
     <script>
-        const client = new QuizGameClient("@Model.AccessCode", "@Model.Nickname", false);
-        client.connectForGame();
+        const sessionId = '@sessionId';
+        const playerId = '@(playerId ?? "")';
+        const isHost = @(isHost.ToString().ToLower());
+
+        let connection = null;
+        let currentQuestion = null;
+        let timerInterval = null;
+        let timeLeft = 0;
+        let hasAnswered = false;
+        let questionStartTime = null;
+
+        async function initGame() {
+            connection = new signalR.HubConnectionBuilder()
+                .withUrl("/quizHub")
+                .withAutomaticReconnect()
+                .build();
+
+            // Event handlers
+            connection.on("QuestionStarted", handleQuestionStarted);
+            connection.on("RoundEnded", handleRoundEnded);
+            connection.on("YourRoundResult", handleYourResult);
+            connection.on("TopPlayers", handleTopPlayers);
+            connection.on("GameFinished", handleGameFinished);
+            connection.on("YourFinalRanking", handleYourFinalRanking);
+            connection.on("GameCancelled", handleGameCancelled);
+            connection.on("AnswerCountUpdate", handleAnswerCount);
+
+            try {
+                await connection.start();
+                console.log("Connected to game");
+            } catch (error) {
+                console.error("Connection error:", error);
+                showToast('Błąd połączenia', 'error');
+            }
+        }
+
+        function handleQuestionStarted(question) {
+            console.log("Question started:", question);
+            currentQuestion = question;
+            hasAnswered = false;
+            questionStartTime = Date.now();
+
+            document.getElementById('questionNumber').textContent = question.questionNumber;
+
+            if (isHost) {
+                document.getElementById('hostPanel').style.display = 'block';
+                document.getElementById('answeredCount').textContent = '0';
+            }
+
+            renderQuestion(question);
+            startTimer(question.timeLimitSeconds);
+        }
+
+        function renderQuestion(question) {
+            const container = document.getElementById('questionContainer');
+
+            let imageHtml = '';
+            if (question.imageUrl) {
+                imageHtml = `<img src="${question.imageUrl}" class="question-image" alt="Obrazek pytania" />`;
+            }
+
+            let answersHtml = question.answers.map((answer, index) => `
+                <button class="answer-btn" data-answer-id="${answer.answerId}" onclick="selectAnswer(${answer.answerId})">
+                    ${answer.content}
+                </button>
+            `).join('');
+
+            container.innerHTML = `
+                <h2 class="question-text">${question.content}</h2>
+                ${imageHtml}
+                <div class="answers-grid" id="answersGrid">
+                    ${answersHtml}
+                </div>
+            `;
+        }
+
+        function startTimer(seconds) {
+            timeLeft = seconds;
+            const totalTime = seconds;
+            const circumference = 2 * Math.PI * 34; // 213.6
+
+            updateTimerDisplay();
+
+            timerInterval = setInterval(() => {
+                timeLeft -= 0.1;
+
+                if (timeLeft <= 0) {
+                    timeLeft = 0;
+                    clearInterval(timerInterval);
+                }
+
+                updateTimerDisplay();
+
+                // Update circle
+                const progress = timeLeft / totalTime;
+                const offset = circumference * (1 - progress);
+                document.getElementById('timerProgress').style.strokeDashoffset = offset;
+
+                // Color warnings
+                const timerText = document.getElementById('timerText');
+                if (timeLeft <= 5) {
+                    timerText.className = 'timer-text timer-danger';
+                } else if (timeLeft <= 10) {
+                    timerText.className = 'timer-text timer-warning';
+                }
+            }, 100);
+        }
+
+        function updateTimerDisplay() {
+            document.getElementById('timerText').textContent = Math.ceil(timeLeft);
+        }
+
+        async function selectAnswer(answerId) {
+            if (hasAnswered || isHost) return;
+
+            hasAnswered = true;
+            const responseTime = (Date.now() - questionStartTime) / 1000;
+
+            // Zaznacz wybraną odpowiedź
+            document.querySelectorAll('.answer-btn').forEach(btn => {
+                btn.disabled = true;
+                if (parseInt(btn.dataset.answerId) === answerId) {
+                    btn.classList.add('selected');
+                }
+            });
+
+            // Wyślij odpowiedź
+            try {
+                const result = await connection.invoke("SubmitAnswer", sessionId, playerId, {
+                    answerId: answerId,
+                    responseTimeSeconds: responseTime
+                });
+
+                if (!result.success) {
+                    showToast(result.errorMessage || 'Błąd wysyłania odpowiedzi', 'error');
+                }
+            } catch (error) {
+                console.error("Submit error:", error);
+                showToast('Błąd połączenia', 'error');
+            }
+
+            // Pokaż stan oczekiwania
+            showWaitingState();
+        }
+
+        function showWaitingState() {
+            const container = document.getElementById('questionContainer');
+            const existingContent = container.innerHTML;
+
+            // Dodaj overlay oczekiwania
+            const waitingOverlay = document.createElement('div');
+            waitingOverlay.className = 'waiting-container';
+            waitingOverlay.id = 'waitingOverlay';
+            waitingOverlay.innerHTML = `
+                <i class="bi bi-check-circle waiting-icon text-success"></i>
+                <p class="waiting-text">Odpowiedź zapisana!</p>
+                <p class="answered-count">Oczekiwanie na innych graczy...</p>
+            `;
+            waitingOverlay.style.position = 'absolute';
+            waitingOverlay.style.top = '50%';
+            waitingOverlay.style.left = '50%';
+            waitingOverlay.style.transform = 'translate(-50%, -50%)';
+            waitingOverlay.style.background = 'rgba(0,0,0,0.8)';
+            waitingOverlay.style.padding = '2rem';
+            waitingOverlay.style.borderRadius = '20px';
+            waitingOverlay.style.zIndex = '10';
+
+            container.style.position = 'relative';
+            container.appendChild(waitingOverlay);
+        }
+
+        function handleRoundEnded(results) {
+            console.log("Round ended:", results);
+            clearInterval(timerInterval);
+
+            // Pokaż poprawną odpowiedź
+            document.querySelectorAll('.answer-btn').forEach(btn => {
+                btn.disabled = true;
+                const answerId = parseInt(btn.dataset.answerId);
+
+                if (answerId === results.correctAnswerId) {
+                    btn.classList.add('correct');
+                } else if (btn.classList.contains('selected')) {
+                    btn.classList.add('incorrect');
+                }
+            });
+
+            // Usuń overlay oczekiwania
+            const overlay = document.getElementById('waitingOverlay');
+            if (overlay) overlay.remove();
+        }
+
+        function handleYourResult(result) {
+            console.log("Your result:", result);
+
+            // Pokaż wynik gracza
+            const container = document.getElementById('questionContainer');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = 'result-container';
+            resultDiv.innerHTML = `
+                <div class="result-icon ${result.isCorrect ? 'correct' : 'incorrect'}">
+                    <i class="bi bi-${result.isCorrect ? 'check-circle-fill' : 'x-circle-fill'}"></i>
+                </div>
+                ${result.isCorrect ? `
+                    <div class="result-points">+${result.pointsAwarded}</div>
+                    <div class="text-success">Czas: ${result.responseTimeSeconds.toFixed(2)}s</div>
+                ` : `
+                    <div class="result-points text-danger">+0</div>
+                `}
+                <div class="result-rank mt-3">
+                    Pozycja: <strong>${result.currentRank}</strong> |
+                    Suma: <strong>${result.totalScore}</strong> pkt
+                </div>
+            `;
+            container.appendChild(resultDiv);
+        }
+
+        function handleTopPlayers(data) {
+            console.log("Top players:", data);
+
+            const container = document.getElementById('questionContainer');
+            const topDiv = document.createElement('div');
+            topDiv.className = 'top-players';
+
+            topDiv.innerHTML = data.players.map((player, index) => `
+                <div class="top-player-card ${index === 0 ? 'rank-1' : ''}">
+                    <div class="top-player-rank">${index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : index + 1}</div>
+                    <div class="top-player-nick">${player.nickname}</div>
+                    <div class="top-player-score">${player.totalScore} pkt</div>
+                    ${player.pointsThisRound > 0 ? `<div class="top-player-points">+${player.pointsThisRound}</div>` : ''}
+                </div>
+            `).join('');
+
+            container.appendChild(topDiv);
+        }
+
+        function handleAnswerCount(data) {
+            if (isHost) {
+                document.getElementById('answeredCount').textContent = data.answeredCount;
+                document.getElementById('totalPlayers').textContent = data.totalPlayers;
+            }
+        }
+
+        function handleGameFinished(ranking) {
+            console.log("Game finished:", ranking);
+            // Przekieruj do strony wyników
+            window.location.href = `/Game/Results?sessionId=${sessionId}&playerId=${playerId}&isHost=${isHost}`;
+        }
+
+        function handleYourFinalRanking(ranking) {
+            // Zapisz ranking do localStorage dla strony wyników
+            localStorage.setItem('finalRanking', JSON.stringify(ranking));
+        }
+
+        function handleGameCancelled(message) {
+            showToast(message.message, 'error');
+            setTimeout(() => {
+                window.location.href = '/';
+            }, 2000);
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `game-toast ${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.animation = 'slideIn 0.3s ease reverse';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // Init
+        initGame();
     </script>
 }

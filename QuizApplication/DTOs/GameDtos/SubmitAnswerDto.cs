@@ -1,11 +1,12 @@
 ﻿namespace QuizApplication.DTOs.GameDtos
 {
     /// <summary>
-    /// Odpowiedź w pytaniu
+    /// Odpowiedź gracza
     /// </summary>
-    public class GameAnswerDto
+    public class SubmitAnswerDto
     {
         public int AnswerId { get; set; }
-        public string Content { get; set; } = string.Empty;
+        public double ResponseTimeSeconds { get; set; }
     }
+
 }

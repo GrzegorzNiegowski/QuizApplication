@@ -1,745 +1,477 @@
-﻿using Microsoft.AspNetCore.SignalR;
-using QuizApplication.DTOs;
-using QuizApplication.DTOs.GameDtos;
-using QuizApplication.DTOs.RealTimeDtos;
-using QuizApplication.DTOs.SessionDtos;
-//using QuizApplication.Hubs;
+﻿using Microsoft.Extensions.Logging;
 using QuizApplication.Models;
+using QuizApplication.Models.Game;
 using QuizApplication.Utilities;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-
 
 namespace QuizApplication.Services
 {
+    /// <summary>
+    /// Implementacja serwisu sesji gry (in-memory, singleton)
+    /// </summary>
     public class GameSessionService : IGameSessionService
     {
-        private readonly ConcurrentDictionary<string, GameSession> _sessions = new();
-        private readonly ConcurrentDictionary<string, string> _connectionToSession = new();
-        private readonly IHubContext<QuizHub> _hub;
+        private readonly ConcurrentDictionary<Guid, GameSession> _sessions = new();
+        private readonly ConcurrentDictionary<string, Guid> _accessCodeToSessionId = new();
         private readonly ILogger<GameSessionService> _logger;
-        private readonly Timer _cleanupTimer;
-        private bool _disposed = false;
 
-        public GameSessionService(IHubContext<QuizHub> hub, ILogger<GameSessionService> logger)
+        public GameSessionService(ILogger<GameSessionService> logger)
         {
-            _hub = hub;
             _logger = logger;
-
-            // Czyszczenie co 10 minut
-            _cleanupTimer = new Timer(
-                CleanupExpiredSessions,
-                null,
-                TimeSpan.FromMinutes(GameConstants.SessionCleanupIntervalMinutes),
-                TimeSpan.FromMinutes(GameConstants.SessionCleanupIntervalMinutes)
-            );
-
-            _logger.LogInformation("GameSessionService initialized with cleanup interval: {Interval} minutes",
-                GameConstants.SessionCleanupIntervalMinutes);
         }
 
-        //#region Session Management
+        #region Session Management
 
-        public OperationResult InitializeSession(StartSessionDto dto, GameQuizDto gameQuiz, string hostUserId)
+        public Task<GameSession> CreateSessionAsync(int quizId, string quizTitle, string accessCode,
+            string hostConnectionId, string hostUserId, List<int> questionIds)
         {
-            var code = SessionCodeHelper.Normalize(gameQuiz.AccessCode);
-
-            if (!SessionCodeHelper.IsValid(code))
+            // Sprawdź czy nie ma już aktywnej sesji dla tego kodu
+            if (_accessCodeToSessionId.ContainsKey(accessCode))
             {
-                return OperationResult.Fail("Nieprawidłowy kod sesji");
-            }
-
-            if (_sessions.TryGetValue(code, out var existing))
-            {
-                // Jeśli to ten sam host i gra nie wystartowała - pozwól
-                if (existing.HostUserId == hostUserId && !existing.IsGameStarted)
+                var existingSession = GetSessionByAccessCode(accessCode);
+                if (existingSession != null && existingSession.IsInProgress)
                 {
-                    _logger.LogInformation("Host {HostId} reconnecting to session {Code}", hostUserId, code);
-                    existing.UpdateActivity();
-                    return OperationResult.Ok();
+                    throw new InvalidOperationException("Sesja dla tego quizu już istnieje");
                 }
-
-                // Jeśli gra trwa
-                if (existing.IsGameStarted)
-                {
-                    return OperationResult.Fail("Gra już trwa dla tego quizu");
-                }
-
-                // Inny host
-                return OperationResult.Fail("Sesja już istnieje z innym hostem");
+                // Usuń starą nieaktywną sesję
+                RemoveSession(existingSession!.Id);
             }
 
             var session = new GameSession
             {
-                QuizId = dto.QuizId,
-                QuizData = gameQuiz,
+                QuizId = quizId,
+                QuizTitle = quizTitle,
+                AccessCode = accessCode,
+                HostConnectionId = hostConnectionId,
                 HostUserId = hostUserId,
-                Players = new List<Player>(),
-                HostConnectionId = "",
-                IsGameStarted = false,
-                CreatedAt = DateTimeOffset.UtcNow,
-                LastActivity = DateTimeOffset.UtcNow
+                QuestionIds = questionIds,
+                TotalQuestions = questionIds.Count
             };
 
-            if (_sessions.TryAdd(code, session))
+            if (_sessions.TryAdd(session.Id, session))
             {
-                _logger.LogInformation("Session {Code} initialized for quiz {QuizId} by host {HostId}",
-                    code, dto.QuizId, hostUserId);
-                return OperationResult.Ok();
+                _accessCodeToSessionId.TryAdd(accessCode, session.Id);
+                _logger.LogInformation("Utworzono sesję {SessionId} dla quizu {QuizId} (kod: {AccessCode})",
+                    session.Id, quizId, accessCode);
             }
 
-            return OperationResult.Fail("Nie udało się utworzyć sesji");
+            return Task.FromResult(session);
         }
 
-        public bool SessionExists(string sessionCode)
+        public GameSession? GetSession(Guid sessionId)
         {
-            var code = SessionCodeHelper.Normalize(sessionCode);
-            return !string.IsNullOrEmpty(code) && _sessions.ContainsKey(code);
+            _sessions.TryGetValue(sessionId, out var session);
+            return session;
         }
 
-
-        //#endregion
-        //#region Player Management
-
-        public JoinSessionResultDto AddPlayer(JoinSessionDto dto, string connectionId)
+        public GameSession? GetSessionByAccessCode(string accessCode)
         {
-            var code = SessionCodeHelper.Normalize(dto.SessionCode);
-
-            if (!_sessions.TryGetValue(code, out var session))
+            if (_accessCodeToSessionId.TryGetValue(accessCode.ToUpperInvariant(), out var sessionId))
             {
-                return new JoinSessionResultDto { Success = false, Error = "Sesja nie istnieje" };
+                return GetSession(sessionId);
             }
-
-            // Blokuj dołączanie podczas trwającej gry
-            if (session.IsGameStarted)
-            {
-                return new JoinSessionResultDto { Success = false, Error = "Gra już trwa, nie można dołączyć" };
-            }
-
-            lock (session.Players)
-            {
-                // Sprawdź limit graczy
-                if (session.Players.Count >= GameConstants.MaxPlayersPerSession)
-                {
-                    return new JoinSessionResultDto
-                    {
-                        Success = false,
-                        Error = $"Osiągnięto maksymalną liczbę graczy ({GameConstants.MaxPlayersPerSession})"
-                    };
-                }
-
-                // Sprawdź czy nick jest zajęty
-                if (session.Players.Any(p => p.Nickname.Equals(dto.PlayerName, StringComparison.OrdinalIgnoreCase)))
-                {
-                    return new JoinSessionResultDto { Success = false, Error = "Nick zajęty" };
-                }
-
-                var participantId = dto.ParticipantId ?? Guid.NewGuid();
-
-                var player = new Player
-                {
-                    ParticipantId = participantId,
-                    ConnectionId = connectionId,
-                    Nickname = dto.PlayerName,
-                    Score = 0
-                };
-
-                session.Players.Add(player);
-                _connectionToSession[connectionId] = code;
-                session.UpdateActivity();
-
-                _logger.LogInformation("Player {Nick} ({ParticipantId}) joined session {Code}",
-                    dto.PlayerName, participantId, code);
-
-                return new JoinSessionResultDto
-                {
-                    Success = true,
-                    SessionCode = code,
-                    ParticipantId = participantId
-                };
-            }
+            return null;
         }
 
-        public void RemovePlayer(string connectionId)
+        public bool RemoveSession(Guid sessionId)
         {
-            var code = GetSessionIdByConnectionId(connectionId);
-            if (code != null && _sessions.TryGetValue(code, out var session))
+            if (_sessions.TryRemove(sessionId, out var session))
             {
-                lock (session.Players)
-                {
-                    var player = session.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
-                    if (player != null)
-                    {
-                        session.Players.Remove(player);
-                        _connectionToSession.TryRemove(connectionId, out _);
-                        session.UpdateActivity();
-
-                        _logger.LogInformation("Player {Nick} removed from session {Code}",
-                            player.Nickname, code);
-                    }
-                }
-            }
-        }
-
-        public bool UpdatePlayerConnection(string sessionCode, Guid participantId, string newConnectionId)
-        {
-            var code = SessionCodeHelper.Normalize(sessionCode);
-
-            if (!_sessions.TryGetValue(code, out var session))
-            {
-                return false;
-            }
-
-            lock (session.Players)
-            {
-                var player = session.Players.FirstOrDefault(p => p.ParticipantId == participantId);
-                if (player == null)
-                {
-                    return false;
-                }
-
-                // Usuń stare mapowanie
-                _connectionToSession.TryRemove(player.ConnectionId, out _);
-
-                // Ustaw nowe
-                player.ConnectionId = newConnectionId;
-                _connectionToSession[newConnectionId] = code;
-                session.UpdateActivity();
-
-                _logger.LogInformation("Player {Nick} ({ParticipantId}) reconnected to session {Code}",
-                    player.Nickname, participantId, code);
-
+                _accessCodeToSessionId.TryRemove(session.AccessCode, out _);
+                _logger.LogInformation("Usunięto sesję {SessionId}", sessionId);
                 return true;
             }
-        }
-
-        public List<PlayerScoreDto> GetPlayersInSession(string sessionCode)
-        {
-            var code = SessionCodeHelper.Normalize(sessionCode);
-
-            if (_sessions.TryGetValue(code, out var session))
-            {
-                lock (session.Players)
-                {
-                    return session.Players
-                        .Select(p => new PlayerScoreDto
-                        {
-                            PlayerName = p.Nickname,
-                            Score = p.Score
-                        })
-                        .ToList();
-                }
-            }
-            return new List<PlayerScoreDto>();
-        }
-
-        //#endregion
-
-        //#region Game Flow
-
-        public async Task<OperationResult> StartGameAutoAsync(string sessionCode, string hostConnectionId)
-        {
-            var code = SessionCodeHelper.Normalize(sessionCode);
-
-            if (!_sessions.TryGetValue(code, out var session))
-            {
-                return OperationResult.Fail("Sesja nie istnieje.");
-            }
-
-            // Sprawdź czy to host
-            if (session.HostConnectionId != hostConnectionId)
-            {
-                return OperationResult.Fail("Tylko host może rozpocząć grę.");
-            }
-
-            lock (session.LockObj)
-            {
-                if (session.IsGameStarted)
-                {
-                    return OperationResult.Fail("Gra już wystartowała.");
-                }
-
-                if (session.QuizData == null || session.QuizData.Questions.Count == 0)
-                {
-                    return OperationResult.Fail("Quiz nie ma żadnych pytań.");
-                }
-
-                if (session.Players.Count == 0)
-                {
-                    return OperationResult.Fail("Brak graczy w sesji.");
-                }
-
-                session.IsGameStarted = true;
-                session.UpdateActivity();
-
-                // Anuluj poprzedni task jeśli istnieje
-                session.GameCts?.Cancel();
-                session.GameCts?.Dispose();
-                session.GameCts = new CancellationTokenSource();
-
-                // Zresetuj stan gry dla wszystkich graczy
-                lock (session.Players)
-                {
-                    foreach (var player in session.Players)
-                    {
-                        player.GameState = new PlayerGameState();
-                        player.Score = 0;
-                    }
-                }
-            }
-
-            _logger.LogInformation("Game started for session {Code} with {PlayerCount} players",
-                code, session.Players.Count);
-
-            // Powiadom wszystkich że gra się rozpoczęła
-            await _hub.Clients.Group(code).SendAsync("GameStarted");
-
-            return OperationResult.Ok();
-        }
-
-        /// <summary>
-        /// Pobiera następne pytanie dla gracza (indywidualna rozgrywka)
-        /// </summary>
-        public QuestionForPlayerDto? GetNextQuestionForPlayer(string sessionCode, string connectionId)
-        {
-            var code = SessionCodeHelper.Normalize(sessionCode);
-
-            if (!_sessions.TryGetValue(code, out var session))
-            {
-                return null;
-            }
-
-            if (!session.IsGameStarted || session.QuizData == null)
-            {
-                return null;
-            }
-
-            Player? player;
-            lock (session.Players)
-            {
-                player = session.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
-            }
-
-            if (player == null)
-            {
-                return null;
-            }
-
-            var gameState = player.GameState;
-
-            // Przejdź do następnego pytania
-            gameState.CurrentQuestionIndex++;
-
-            // Sprawdź czy są jeszcze pytania
-            if (gameState.CurrentQuestionIndex >= session.QuizData.Questions.Count)
-            {
-                gameState.IsFinished = true;
-                return null;
-            }
-
-            var question = session.QuizData.Questions[gameState.CurrentQuestionIndex];
-            gameState.CurrentQuestionStartUtc = DateTimeOffset.UtcNow;
-
-            session.UpdateActivity();
-
-            return new QuestionForPlayerDto
-            {
-                QuestionId = question.Id,
-                Content = question.Content,
-                TimeLimitSeconds = question.TimeLimitSeconds,
-                Points = question.Points,
-                CurrentQuestionIndex = gameState.CurrentQuestionIndex + 1,
-                TotalQuestions = session.QuizData.Questions.Count,
-                ServerStartUtc = gameState.CurrentQuestionStartUtc.Value,
-                Answers = question.Answers.Select(a => new AnswerForPlayerDto
-                {
-                    AnswerId = a.Id,
-                    Content = a.Content
-                }).ToList()
-            };
-        }
-
-        /// <summary>
-        /// Sprawdza czy gracz zakończył quiz
-        /// </summary>
-        public bool IsPlayerFinished(string sessionCode, string connectionId)
-        {
-            var code = SessionCodeHelper.Normalize(sessionCode);
-
-            if (!_sessions.TryGetValue(code, out var session))
-            {
-                return true;
-            }
-
-            Player? player;
-            lock (session.Players)
-            {
-                player = session.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
-            }
-
-            return player?.GameState.IsFinished ?? true;
-        }
-
-        private object BuildRevealPayload(string code, int questionId)
-        {
-            if (!_sessions.TryGetValue(code, out var s) || s.QuizData == null)
-            {
-                return new { QuestionId = questionId, CorrectAnswerId = (int?)null };
-            }
-
-            var q = s.QuizData.Questions.FirstOrDefault(x => x.Id == questionId);
-            var correct = q?.Answers.FirstOrDefault(a => a.IsCorrect);
-
-            return new
-            {
-                QuestionId = questionId,
-                CorrectAnswerId = correct?.Id
-            };
-        }
-
-        public OperationResult SubmitAnswer(string sessionCode, string connectionId, SubmitAnswerDto dto)
-        {
-            var code = SessionCodeHelper.Normalize(sessionCode);
-
-            if (!_sessions.TryGetValue(code, out var s))
-            {
-                return OperationResult.Fail("Sesja nie istnieje.");
-            }
-
-            // Czy gra trwa
-            if (!s.IsGameStarted)
-            {
-                return OperationResult.Fail("Gra jeszcze się nie rozpoczęła.");
-            }
-
-            if (s.QuizData == null)
-            {
-                return OperationResult.Fail("Brak danych quizu.");
-            }
-
-            // Znajdź gracza
-            Player? player;
-            lock (s.Players)
-            {
-                player = s.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
-            }
-
-            if (player == null)
-            {
-                return OperationResult.Fail("Nie jesteś graczem w tej sesji.");
-            }
-
-            var gameState = player.GameState;
-
-            // Sprawdź czy gracz nie skończył
-            if (gameState.IsFinished)
-            {
-                return OperationResult.Fail("Quiz został już zakończony.");
-            }
-
-            // Sprawdź czy pytanie odpowiada aktualnemu pytaniu gracza
-            if (gameState.CurrentQuestionIndex < 0 || gameState.CurrentQuestionIndex >= s.QuizData.Questions.Count)
-            {
-                return OperationResult.Fail("Brak aktywnego pytania.");
-            }
-
-            var currentQ = s.QuizData.Questions[gameState.CurrentQuestionIndex];
-
-            if (currentQ.Id != dto.QuestionId)
-            {
-                return OperationResult.Fail("To pytanie nie jest aktualne.");
-            }
-
-            // Sprawdź czy już odpowiedział na to pytanie
-            if (gameState.AnsweredQuestionIds.Contains(dto.QuestionId))
-            {
-                return OperationResult.Fail("Już odpowiedziałeś na to pytanie.");
-            }
-
-            // Sprawdź czas
-            var start = gameState.CurrentQuestionStartUtc;
-            if (start == null)
-            {
-                return OperationResult.Fail("Brak aktywnego pytania.");
-            }
-
-            var elapsed = DateTimeOffset.UtcNow - start.Value;
-            if (elapsed.TotalSeconds > currentQ.TimeLimitSeconds + GameConstants.TimerToleranceSeconds)
-            {
-                return OperationResult.Fail("Czas na odpowiedź minął.");
-            }
-
-            // Zapisz odpowiedź
-            gameState.AnsweredQuestionIds.Add(dto.QuestionId);
-
-            // Czy answer należy do pytania
-            var answer = currentQ.Answers.FirstOrDefault(a => a.Id == dto.AnswerId);
-            if (answer == null)
-            {
-                return OperationResult.Fail("Nieprawidłowa odpowiedź dla tego pytania.");
-            }
-
-            // Dodaj punkty jeśli poprawna
-            if (answer.IsCorrect)
-            {
-                player.Score += currentQ.Points;
-                _logger.LogDebug("Player {Nick} scored {Points} points for question {QId}",
-                    player.Nickname, currentQ.Points, dto.QuestionId);
-            }
-
-            s.UpdateActivity();
-            return OperationResult.Ok();
-        }
-
-        public ScoreboardDto GetLeaderboard(string sessionCode)
-        {
-            var code = SessionCodeHelper.Normalize(sessionCode);
-            var result = new ScoreboardDto();
-
-            if (_sessions.TryGetValue(code, out var s))
-            {
-                lock (s.Players)
-                {
-                    result.Players = s.Players
-                        .OrderByDescending(p => p.Score)
-                        .Select(p => new PlayerScoreDto
-                        {
-                            PlayerName = p.Nickname,
-                            Score = p.Score
-                        })
-                        .ToList();
-                }
-            }
-
-            return result;
-        }
-
-        //#endregion
-
-        //#region Helpers
-
-        public string? GetSessionIdByConnectionId(string connectionId)
-        {
-            return _connectionToSession.TryGetValue(connectionId, out var accessCode) ? accessCode : null;
-        }
-
-        public bool IsHost(string connectionId)
-        {
-            return _sessions.Values.Any(s => s.HostConnectionId == connectionId);
-        }
-
-        public void SetHostConnectionId(string sessionCode, string connectionId)
-        {
-            var code = SessionCodeHelper.Normalize(sessionCode);
-
-            if (_sessions.TryGetValue(code, out var session))
-            {
-                session.HostConnectionId = connectionId;
-                _connectionToSession[connectionId] = code;
-                session.UpdateActivity();
-
-                _logger.LogInformation("Host connection set for session {Code}", code);
-            }
-        }
-
-        public bool IsNicknameTaken(string sessionCode, string nickname)
-        {
-            var code = SessionCodeHelper.Normalize(sessionCode);
-
-            if (_sessions.TryGetValue(code, out var s))
-            {
-                lock (s.Players)
-                {
-                    return s.Players.Any(p => p.Nickname.Equals(nickname, StringComparison.OrdinalIgnoreCase));
-                }
-            }
-
             return false;
         }
 
-        public bool IsGameInProgress(string sessionCode)
+        public IEnumerable<GameSession> GetAllActiveSessions()
         {
-            var code = SessionCodeHelper.Normalize(sessionCode);
-
-            if (_sessions.TryGetValue(code, out var s))
-            {
-                return s.IsGameStarted;
-            }
-
-            return false;
+            return _sessions.Values.Where(s =>
+                s.Status != GameStatus.Finished && s.Status != GameStatus.Cancelled);
         }
 
-        public bool IsPlayerInSessionByNickname(string sessionCode, string nickname)
-        {
-            var code = SessionCodeHelper.Normalize(sessionCode);
+        #endregion
 
-            if (_sessions.TryGetValue(code, out var s))
+        #region Player Management
+
+        public Task<(bool Success, string? ErrorMessage, Player? Player)> JoinSessionAsync(
+            string accessCode, string nickname, string connectionId, string? userId = null)
+        {
+            var session = GetSessionByAccessCode(accessCode);
+
+            if (session == null)
             {
-                lock (s.Players)
-                {
-                    return s.Players.Any(p => p.Nickname.Equals(nickname, StringComparison.OrdinalIgnoreCase));
-                }
+                return Task.FromResult<(bool, string?, Player?)>((false, GameConstants.Messages.GameNotFound, null));
             }
 
-            return false;
-        }
-
-        public bool IsHostOfSession(string sessionCode, string connectionId)
-        {
-            var code = SessionCodeHelper.Normalize(sessionCode);
-            return _sessions.TryGetValue(code, out var s) && s.HostConnectionId == connectionId;
-        }
-
-        public bool IsPlayerInSession(string sessionCode, string connectionId)
-        {
-            var code = SessionCodeHelper.Normalize(sessionCode);
-
-            if (!_sessions.TryGetValue(code, out var s))
+            if (!session.CanJoin)
             {
-                return false;
+                return Task.FromResult<(bool, string?, Player?)>((false, GameConstants.Messages.GameAlreadyStarted, null));
             }
 
-            lock (s.Players)
+            if (session.Players.Count >= GameConstants.MaxPlayersPerSession)
             {
-                return s.Players.Any(p => p.ConnectionId == connectionId);
+                return Task.FromResult<(bool, string?, Player?)>((false, GameConstants.Messages.GameFull, null));
             }
-        }
 
-        public SessionStatisticsDto GetSessionStatistics()
-        {
-            var stats = new SessionStatisticsDto
+            if (session.IsNicknameTaken(nickname))
             {
-                TotalSessions = _sessions.Count,
-                ActiveGames = _sessions.Values.Count(s => s.IsGameStarted),
-                WaitingInLobby = _sessions.Values.Count(s => !s.IsGameStarted),
-                TotalPlayers = _sessions.Values.Sum(s => s.Players.Count),
-                ActiveSessions = _sessions.Select(kvp => new SessionInfoDto
-                {
-                    SessionCode = kvp.Key,
-                    QuizId = kvp.Value.QuizId,
-                    QuizTitle = kvp.Value.QuizData?.Title ?? "Unknown"
-                }).ToList()
+                return Task.FromResult<(bool, string?, Player?)>((false, GameConstants.Messages.NicknameTaken, null));
+            }
+
+            var player = new Player
+            {
+                Nickname = nickname,
+                ConnectionId = connectionId,
+                UserId = userId
             };
 
-            return stats;
+            if (session.TryAddPlayer(player))
+            {
+                _logger.LogInformation("Gracz {Nickname} dołączył do sesji {SessionId}", nickname, session.Id);
+                return Task.FromResult<(bool, string?, Player?)>((true, null, player));
+            }
+
+            return Task.FromResult<(bool, string?, Player?)>((false, "Nie udało się dołączyć do gry", null));
         }
 
-        //#endregion
-
-        //#region Cleanup
-
-        private void CleanupExpiredSessions(object? state)
+        public Task<bool> LeaveSessionAsync(Guid sessionId, Guid playerId)
         {
-            if (_disposed) return;
+            var session = GetSession(sessionId);
+            if (session == null) return Task.FromResult(false);
 
-            try
+            if (session.TryRemovePlayer(playerId))
             {
-                var now = DateTimeOffset.UtcNow;
-                var toRemove = new List<string>();
-
-                foreach (var kvp in _sessions)
-                {
-                    var session = kvp.Value;
-                    var timeSinceActivity = now - session.LastActivity;
-
-                    // Usuń sesje nieaktywne > 2h
-                    if (timeSinceActivity.TotalHours > GameConstants.InactiveSessionTimeoutHours)
-                    {
-                        toRemove.Add(kvp.Key);
-                        _logger.LogInformation("Marking inactive session {Code} for cleanup (inactive for {Hours:F1}h)",
-                            kvp.Key, timeSinceActivity.TotalHours);
-                        continue;
-                    }
-
-                    // Usuń zakończone gry > 30 min (wszystkie gracze skończyli)
-                    if (session.IsGameStarted && timeSinceActivity.TotalMinutes > GameConstants.CompletedGameTimeoutMinutes)
-                    {
-                        bool allFinished;
-                        lock (session.Players)
-                        {
-                            allFinished = session.Players.All(p => p.GameState.IsFinished);
-                        }
-
-                        if (allFinished)
-                        {
-                            toRemove.Add(kvp.Key);
-                            _logger.LogInformation("Marking completed game session {Code} for cleanup", kvp.Key);
-                        }
-                    }
-                }
-
-                foreach (var code in toRemove)
-                {
-                    if (_sessions.TryRemove(code, out var removed))
-                    {
-                        // Anuluj task gry jeśli jeszcze działa
-                        try
-                        {
-                            removed.GameCts?.Cancel();
-                            removed.GameCts?.Dispose();
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Error disposing CTS for session {Code}", code);
-                        }
-
-                        // Wyczyść connectionId mapping
-                        var connectionsToRemove = _connectionToSession
-                            .Where(c => c.Value == code)
-                            .Select(c => c.Key)
-                            .ToList();
-
-                        foreach (var conn in connectionsToRemove)
-                        {
-                            _connectionToSession.TryRemove(conn, out _);
-                        }
-
-                        _logger.LogInformation("Cleaned up session {Code}", code);
-                    }
-                }
-
-                if (toRemove.Any())
-                {
-                    _logger.LogInformation("Cleanup completed: removed {Count} sessions", toRemove.Count);
-                }
+                _logger.LogInformation("Gracz {PlayerId} opuścił sesję {SessionId}", playerId, sessionId);
+                return Task.FromResult(true);
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error during session cleanup");
-            }
+            return Task.FromResult(false);
         }
 
-        public void Dispose()
+        public Task<bool> DisconnectPlayerAsync(string connectionId)
         {
-            if (_disposed) return;
+            var (session, player) = FindPlayerByConnectionId(connectionId);
+            if (session == null || player == null) return Task.FromResult(false);
 
-            _disposed = true;
+            player.Status = PlayerStatus.Disconnected;
+            player.DisconnectedAt = DateTime.UtcNow;
 
-            _logger.LogInformation("Disposing GameSessionService");
+            _logger.LogInformation("Gracz {Nickname} rozłączony w sesji {SessionId}",
+                player.Nickname, session.Id);
 
-            _cleanupTimer?.Dispose();
+            return Task.FromResult(true);
+        }
 
-            // Anuluj wszystkie aktywne gry
+        public Task<(bool Success, GameSession? Session, Player? Player)> ReconnectPlayerAsync(
+            string accessCode, string nickname, string newConnectionId)
+        {
+            var session = GetSessionByAccessCode(accessCode);
+            if (session == null)
+            {
+                return Task.FromResult<(bool, GameSession?, Player?)>((false, null, null));
+            }
+
+            var player = session.GetPlayerByNickname(nickname);
+            if (player == null || player.Status != PlayerStatus.Disconnected)
+            {
+                return Task.FromResult<(bool, GameSession?, Player?)>((false, null, null));
+            }
+
+            // Sprawdź timeout reconnectu
+            if (player.DisconnectedAt.HasValue)
+            {
+                var disconnectedFor = DateTime.UtcNow - player.DisconnectedAt.Value;
+                if (disconnectedFor.TotalSeconds > GameConstants.PlayerReconnectTimeoutSeconds)
+                {
+                    session.TryRemovePlayer(player.Id);
+                    return Task.FromResult<(bool, GameSession?, Player?)>((false, null, null));
+                }
+            }
+
+            player.ConnectionId = newConnectionId;
+            player.Status = PlayerStatus.Connected;
+            player.DisconnectedAt = null;
+
+            _logger.LogInformation("Gracz {Nickname} ponownie połączony w sesji {SessionId}",
+                nickname, session.Id);
+
+            return Task.FromResult<(bool, GameSession?, Player?)>((true, session, player));
+        }
+
+        public (GameSession? Session, Player? Player) FindPlayerByConnectionId(string connectionId)
+        {
             foreach (var session in _sessions.Values)
             {
-                try
+                var player = session.GetPlayerByConnectionId(connectionId);
+                if (player != null)
                 {
-                    session.GameCts?.Cancel();
-                    session.GameCts?.Dispose();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Error disposing session CTS");
+                    return (session, player);
                 }
             }
-            _sessions.Clear();
-            _connectionToSession.Clear();
+            return (null, null);
         }
-        //#endregion
 
+        #endregion
 
+        #region Game Control
 
-       
+        public Task<(bool Success, string? ErrorMessage)> StartGameAsync(Guid sessionId, string hostConnectionId)
+        {
+            var session = GetSession(sessionId);
+            if (session == null)
+            {
+                return Task.FromResult<(bool, string?)>((false, GameConstants.Messages.GameNotFound));
+            }
+
+            if (session.HostConnectionId != hostConnectionId)
+            {
+                return Task.FromResult<(bool, string?)>((false, GameConstants.Messages.NotAuthorized));
+            }
+
+            if (session.ActivePlayerCount < GameConstants.MinPlayersToStart)
+            {
+                return Task.FromResult<(bool, string?)>((false, GameConstants.Messages.NotEnoughPlayers));
+            }
+
+            session.Status = GameStatus.InProgress;
+            _logger.LogInformation("Gra rozpoczęta w sesji {SessionId}", sessionId);
+
+            return Task.FromResult<(bool, string?)>((true, null));
+        }
+
+        public Task<(bool Success, int? QuestionId)> NextQuestionAsync(Guid sessionId)
+        {
+            var session = GetSession(sessionId);
+            if (session == null || session.Status != GameStatus.InProgress)
+            {
+                return Task.FromResult<(bool, int?)>((false, null));
+            }
+
+            session.CurrentQuestionIndex++;
+
+            if (session.CurrentQuestionIndex >= session.TotalQuestions)
+            {
+                return Task.FromResult<(bool, int?)>((false, null));
+            }
+
+            session.QuestionStartedAt = DateTime.UtcNow;
+            var questionId = session.QuestionIds[session.CurrentQuestionIndex];
+
+            _logger.LogDebug("Pytanie {Index}/{Total} w sesji {SessionId}",
+                session.CurrentQuestionIndex + 1, session.TotalQuestions, sessionId);
+
+            return Task.FromResult<(bool, int?)>((true, questionId));
+        }
+
+        public Task<bool> EndQuestionAsync(Guid sessionId)
+        {
+            var session = GetSession(sessionId);
+            if (session == null) return Task.FromResult(false);
+
+            session.Status = GameStatus.ShowingResults;
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> FinishGameAsync(Guid sessionId)
+        {
+            var session = GetSession(sessionId);
+            if (session == null) return Task.FromResult(false);
+
+            session.Status = GameStatus.Finished;
+            _logger.LogInformation("Gra zakończona w sesji {SessionId}", sessionId);
+
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> CancelGameAsync(Guid sessionId, string hostConnectionId)
+        {
+            var session = GetSession(sessionId);
+            if (session == null) return Task.FromResult(false);
+
+            if (session.HostConnectionId != hostConnectionId)
+            {
+                return Task.FromResult(false);
+            }
+
+            session.Status = GameStatus.Cancelled;
+            _logger.LogInformation("Gra anulowana w sesji {SessionId}", sessionId);
+
+            return Task.FromResult(true);
+        }
+
+        #endregion
+
+        #region Answers
+
+        public Task<(bool Success, int PointsAwarded, string? ErrorMessage)> SubmitAnswerAsync(
+            Guid sessionId, Guid playerId, int answerId, double responseTimeSeconds)
+        {
+            var session = GetSession(sessionId);
+            if (session == null || session.Status != GameStatus.InProgress)
+            {
+                return Task.FromResult<(bool, int, string?)>((false, 0, GameConstants.Messages.GameNotFound));
+            }
+
+            if (!session.CurrentQuestionId.HasValue)
+            {
+                return Task.FromResult<(bool, int, string?)>((false, 0, "Brak aktywnego pytania"));
+            }
+
+            if (!session.Players.TryGetValue(playerId, out var player))
+            {
+                return Task.FromResult<(bool, int, string?)>((false, 0, "Gracz nie znaleziony"));
+            }
+
+            var questionId = session.CurrentQuestionId.Value;
+
+            if (player.HasAnswered(questionId))
+            {
+                return Task.FromResult<(bool, int, string?)>((false, 0, GameConstants.Messages.AlreadyAnswered));
+            }
+
+            // Punkty będą obliczone później gdy znamy poprawną odpowiedź
+            var answer = new PlayerAnswer
+            {
+                QuestionId = questionId,
+                SelectedAnswerId = answerId,
+                ResponseTimeSeconds = responseTimeSeconds,
+                AnsweredAt = DateTime.UtcNow
+            };
+
+            if (player.AddAnswer(answer))
+            {
+                _logger.LogDebug("Gracz {Nickname} odpowiedział na pytanie {QuestionId} w {Time}s",
+                    player.Nickname, questionId, responseTimeSeconds);
+                return Task.FromResult<(bool, int, string?)>((true, 0, null)); // Punkty obliczane w GetRoundResults
+            }
+
+            return Task.FromResult<(bool, int, string?)>((false, 0, "Nie udało się zapisać odpowiedzi"));
+        }
+
+        public RoundResults GetRoundResults(Guid sessionId, int questionId)
+        {
+            var session = GetSession(sessionId);
+            if (session == null)
+            {
+                return new RoundResults();
+            }
+
+            var results = new RoundResults
+            {
+                QuestionId = questionId
+            };
+
+            // Pobierz ranking na potrzeby wyników
+            var ranking = session.GetRanking();
+
+            for (int i = 0; i < ranking.Count; i++)
+            {
+                var player = ranking[i];
+                var answer = player.GetAnswer(questionId);
+
+                var playerResult = new PlayerRoundResult
+                {
+                    PlayerId = player.Id,
+                    Nickname = player.Nickname,
+                    SelectedAnswerId = answer?.SelectedAnswerId,
+                    IsCorrect = answer?.IsCorrect ?? false,
+                    PointsAwarded = answer?.PointsAwarded ?? 0,
+                    ResponseTimeSeconds = answer?.ResponseTimeSeconds ?? 0,
+                    TotalScore = player.TotalScore,
+                    Rank = i + 1
+                };
+
+                results.PlayerResults.Add(playerResult);
+            }
+
+            // Top 5 graczy
+            results.TopPlayers = ranking.Take(5).Select((p, i) => new PlayerRankingEntry
+            {
+                Rank = i + 1,
+                PlayerId = p.Id,
+                Nickname = p.Nickname,
+                TotalScore = p.TotalScore,
+                CorrectAnswers = p.Answers.Values.Count(a => a.IsCorrect)
+            }).ToList();
+
+            return results;
+        }
+
+        public List<PlayerRankingEntry> GetFinalRanking(Guid sessionId)
+        {
+            var session = GetSession(sessionId);
+            if (session == null) return new List<PlayerRankingEntry>();
+
+            var ranking = session.GetRanking();
+
+            return ranking.Select((player, index) =>
+            {
+                var answers = player.Answers.Values.ToList();
+                var correctAnswers = answers.Count(a => a.IsCorrect);
+                var avgTime = answers.Any() ? answers.Average(a => a.ResponseTimeSeconds) : 0;
+
+                return new PlayerRankingEntry
+                {
+                    Rank = index + 1,
+                    PlayerId = player.Id,
+                    Nickname = player.Nickname,
+                    TotalScore = player.TotalScore,
+                    CorrectAnswers = correctAnswers,
+                    AverageResponseTime = Math.Round(avgTime, 2)
+                };
+            }).ToList();
+        }
+
+        #endregion
+
+        #region Scoring
+
+        public int CalculatePoints(int maxPoints, double responseTimeSeconds, double totalTimeSeconds)
+        {
+            if (responseTimeSeconds <= 0) responseTimeSeconds = 0.1;
+            if (responseTimeSeconds >= totalTimeSeconds) return GameConstants.MinPointsForCorrectAnswer;
+
+            var remainingTime = totalTimeSeconds - responseTimeSeconds;
+            var ratio = remainingTime / totalTimeSeconds;
+            var points = (int)(maxPoints * ratio);
+
+            return Math.Max(points, GameConstants.MinPointsForCorrectAnswer);
+        }
+
+        #endregion
+
+        #region Cleanup
+
+        public Task CleanupInactiveSessionsAsync()
+        {
+            var cutoff = DateTime.UtcNow.AddMinutes(-GameConstants.SessionLobbyTimeoutMinutes);
+            var toRemove = _sessions.Values
+                .Where(s => s.Status == GameStatus.Lobby && s.CreatedAt < cutoff)
+                .Select(s => s.Id)
+                .ToList();
+
+            foreach (var id in toRemove)
+            {
+                RemoveSession(id);
+                _logger.LogInformation("Usunięto nieaktywną sesję {SessionId}", id);
+            }
+
+            // Usuń też zakończone sesje starsze niż 1 godzina
+            var finishedCutoff = DateTime.UtcNow.AddHours(-1);
+            var finishedToRemove = _sessions.Values
+                .Where(s => (s.Status == GameStatus.Finished || s.Status == GameStatus.Cancelled)
+                            && s.CreatedAt < finishedCutoff)
+                .Select(s => s.Id)
+                .ToList();
+
+            foreach (var id in finishedToRemove)
+            {
+                RemoveSession(id);
+            }
+
+            return Task.CompletedTask;
+        }
+
+        #endregion
     }
 }
-

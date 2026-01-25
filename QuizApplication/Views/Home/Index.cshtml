@@ -2,48 +2,132 @@
     ViewData["Title"] = "Strona główna";
 }
 
-<div class="text-center py-5">
-    <h1 class="display-4 mb-4">🎯 Witaj w Aplikacji Quizowej!</h1>
-    <p class="lead text-muted mb-5">
-        Twórz własne quizy, dodawaj pytania i baw się dobrze!
-    </p>
+<!-- Hero Section -->
+<div class="container py-5">
+    <div class="row align-items-center">
+        <!-- Lewa kolumna - dołączanie do gry -->
+        <div class="col-lg-6 mb-4 mb-lg-0">
+            <div class="card shadow-lg border-0" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                <div class="card-body p-5 text-white text-center">
+                    <h2 class="display-5 fw-bold mb-3">
+                        <i class="bi bi-controller me-2"></i>
+                        Dołącz do Quizu
+                    </h2>
+                    <p class="lead mb-4">Wpisz kod gry i rywalizuj z innymi!</p>
 
-    
-
-    @if (User.Identity?.IsAuthenticated ?? false)
-    {
-        <div class="row justify-content-center">
-            <div class="col-md-4 mb-3">
-                <div class="card h-100 shadow-sm">
-                    <div class="card-body text-center">
-                        <h5 class="card-title">📝 Moje Quizy</h5>
-                        <p class="card-text text-muted">Przeglądaj i zarządzaj swoimi quizami</p>
-                        <a asp-controller="Quizzes" asp-action="Index" class="btn btn-primary">
-                            Przejdź do quizów
-                        </a>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4 mb-3">
-                <div class="card h-100 shadow-sm">
-                    <div class="card-body text-center">
-                        <h5 class="card-title">➕ Nowy Quiz</h5>
-                        <p class="card-text text-muted">Utwórz nowy quiz od podstaw</p>
-                        <a asp-controller="Quizzes" asp-action="Create" class="btn btn-success">
-                            Utwórz quiz
-                        </a>
-                    </div>
+                    <form action="/Game/Join" method="get" class="d-flex gap-2 justify-content-center flex-wrap">
+                        <input type="text"
+                               name="code"
+                               class="form-control form-control-lg text-center"
+                               placeholder="XXXXX"
+                               maxlength="5"
+                               style="max-width: 180px; font-size: 1.5rem; letter-spacing: 0.3rem; text-transform: uppercase;"
+                               pattern="[A-Za-z0-9]{5}"
+                               title="Wpisz 5-znakowy kod gry" />
+                        <button type="submit" class="btn btn-light btn-lg fw-bold">
+                            <i class="bi bi-arrow-right-circle-fill me-1"></i> Dołącz
+                        </button>
+                    </form>
                 </div>
             </div>
         </div>
-    }
-    else
-    {
-        <div class="alert alert-info d-inline-block">
-            <a asp-area="Identity" asp-page="/Account/Login">Zaloguj się</a>
-            lub
-            <a asp-area="Identity" asp-page="/Account/Register">zarejestruj</a>,
-            aby tworzyć własne quizy!
+
+        <!-- Prawa kolumna - informacje -->
+        <div class="col-lg-6">
+            <h1 class="display-4 fw-bold mb-4">
+                Quiz<span class="text-primary">Application</span>
+            </h1>
+            <p class="lead text-muted mb-4">
+                Twórz interaktywne quizy i rywalizuj ze znajomymi w czasie rzeczywistym!
+            </p>
+
+            <div class="row g-3 mb-4">
+                <div class="col-sm-6">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-lightning-charge-fill text-warning fs-3 me-3"></i>
+                        <div>
+                            <strong>Szybka rozgrywka</strong>
+                            <p class="text-muted small mb-0">Punkty za szybkość</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-sm-6">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-people-fill text-info fs-3 me-3"></i>
+                        <div>
+                            <strong>Do 100 graczy</strong>
+                            <p class="text-muted small mb-0">W jednej sesji</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-sm-6">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-trophy-fill text-success fs-3 me-3"></i>
+                        <div>
+                            <strong>Ranking na żywo</strong>
+                            <p class="text-muted small mb-0">Zobacz kto prowadzi</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-sm-6">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-phone-fill text-primary fs-3 me-3"></i>
+                        <div>
+                            <strong>Na każdym urządzeniu</strong>
+                            <p class="text-muted small mb-0">Komputer, tablet, telefon</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            @if (User.Identity?.IsAuthenticated == true)
+            {
+                <a asp-controller="Quizzes" asp-action="Index" class="btn btn-primary btn-lg">
+                    <i class="bi bi-collection me-2"></i> Moje Quizy
+                </a>
+                <a asp-controller="Quizzes" asp-action="Create" class="btn btn-outline-primary btn-lg ms-2">
+                    <i class="bi bi-plus-circle me-2"></i> Utwórz Quiz
+                </a>
+            }
+            else
+            {
+                <a asp-area="Identity" asp-page="/Account/Login" class="btn btn-primary btn-lg">
+                    <i class="bi bi-box-arrow-in-right me-2"></i> Zaloguj się
+                </a>
+                <a asp-area="Identity" asp-page="/Account/Register" class="btn btn-outline-primary btn-lg ms-2">
+                    <i class="bi bi-person-plus me-2"></i> Zarejestruj się
+                </a>
+            }
         </div>
-    }
+    </div>
+</div>
+
+<!-- Jak to działa -->
+<div class="bg-light py-5 mt-5">
+    <div class="container">
+        <h2 class="text-center mb-5">Jak to działa?</h2>
+        <div class="row text-center g-4">
+            <div class="col-md-4">
+                <div class="rounded-circle bg-primary text-white d-inline-flex align-items-center justify-content-center mb-3" style="width: 80px; height: 80px;">
+                    <i class="bi bi-pencil-square fs-2"></i>
+                </div>
+                <h4>1. Utwórz quiz</h4>
+                <p class="text-muted">Dodaj pytania i odpowiedzi. Ustaw czas i punkty dla każdego pytania.</p>
+            </div>
+            <div class="col-md-4">
+                <div class="rounded-circle bg-success text-white d-inline-flex align-items-center justify-content-center mb-3" style="width: 80px; height: 80px;">
+                    <i class="bi bi-share fs-2"></i>
+                </div>
+                <h4>2. Udostępnij kod</h4>
+                <p class="text-muted">Podziel się 5-znakowym kodem z uczestnikami. Mogą dołączyć bez rejestracji.</p>
+            </div>
+            <div class="col-md-4">
+                <div class="rounded-circle bg-warning text-white d-inline-flex align-items-center justify-content-center mb-3" style="width: 80px; height: 80px;">
+                    <i class="bi bi-play-fill fs-2"></i>
+                </div>
+                <h4>3. Rozpocznij grę</h4>
+                <p class="text-muted">Wszyscy odpowiadają jednocześnie. Im szybciej, tym więcej punktów!</p>
+            </div>
+        </div>
+    </div>
 </div>

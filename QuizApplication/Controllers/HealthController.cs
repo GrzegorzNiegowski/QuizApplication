@@ -37,6 +37,8 @@ namespace QuizApplication.Controllers
         /// <summary>
         /// Get active game sessions statistics (Admin only)
         /// </summary>
+        /// 
+        /*
         [HttpGet("sessions")]
         [Authorize(Roles = "Admin")]
         public IActionResult GetActiveSessions()
@@ -52,6 +54,7 @@ namespace QuizApplication.Controllers
                 return StatusCode(500, new { error = "Failed to retrieve session statistics" });
             }
         }
+        */
 
     }
 }

@@ -1,0 +1,264 @@
+﻿@{
+    ViewData["Title"] = "Udostępnij Quiz";
+    Layout = "_GameLayout";
+    var quizId = ViewBag.QuizId;
+    var quizTitle = ViewBag.QuizTitle;
+    var accessCode = ViewBag.AccessCode;
+    var questionCount = ViewBag.QuestionCount;
+}
+
+<div class="lobby-container">
+    <!-- Header -->
+    <div class="mb-4">
+        <h2 class="text-white-50 mb-2">Udostępniasz quiz:</h2>
+        <h1 class="display-5 fw-bold text-white">@quizTitle</h1>
+        <p class="text-white-50">@questionCount pytań</p>
+    </div>
+
+    <!-- Kod gry -->
+    <div class="mb-4">
+        <p class="text-white-50 mb-1">Kod dołączenia:</p>
+        <div class="lobby-code" id="accessCode">@accessCode</div>
+        <button class="btn btn-outline-light btn-sm" onclick="copyCode()">
+            <i class="bi bi-clipboard me-1"></i> Kopiuj kod
+        </button>
+    </div>
+
+    <!-- Status połączenia -->
+    <div id="connectionStatus" class="mb-3">
+        <span class="badge bg-warning">
+            <i class="bi bi-hourglass-split me-1"></i> Łączenie...
+        </span>
+    </div>
+
+    <!-- Lista graczy -->
+    <div class="mb-4">
+        <h4 class="text-white-50">
+            <i class="bi bi-people me-2"></i>
+            Gracze (<span id="playerCount">0</span>)
+        </h4>
+        <div class="player-list" id="playerList">
+            <div class="text-white-50">Oczekiwanie na graczy...</div>
+        </div>
+    </div>
+
+    <!-- Przyciski -->
+    <div class="d-flex gap-3 justify-content-center flex-wrap">
+        <button id="startBtn" class="btn btn-start" disabled onclick="startGame()">
+            <i class="bi bi-play-fill me-2"></i> Rozpocznij grę
+        </button>
+        <button id="cancelBtn" class="btn btn-cancel" onclick="cancelGame()">
+            <i class="bi bi-x-lg me-2"></i> Anuluj
+        </button>
+    </div>
+
+    <!-- Link dla graczy -->
+    <div class="mt-5 p-3 rounded" style="background: rgba(255,255,255,0.05);">
+        <p class="text-white-50 mb-2">Link dla graczy:</p>
+        <code id="joinLink" class="text-info"></code>
+        <button class="btn btn-outline-info btn-sm ms-2" onclick="copyLink()">
+            <i class="bi bi-link-45deg"></i>
+        </button>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const quizId = @quizId;
+        let connection = null;
+        let sessionId = null;
+        const players = new Map();
+
+        // Ustaw link
+        const joinUrl = `${window.location.origin}/Game/Join?code=@accessCode`;
+        document.getElementById('joinLink').textContent = joinUrl;
+
+        async function initHost() {
+            connection = new signalR.HubConnectionBuilder()
+                .withUrl("/quizHub")
+                .withAutomaticReconnect()
+                .build();
+
+            // Event handlers
+            connection.on("PlayerEvent", handlePlayerEvent);
+            connection.on("GameMessage", handleMessage);
+
+            connection.onreconnecting(() => {
+                updateConnectionStatus('warning', 'Ponowne łączenie...');
+            });
+
+            connection.onreconnected(() => {
+                updateConnectionStatus('success', 'Połączono');
+            });
+
+            connection.onclose(() => {
+                updateConnectionStatus('danger', 'Rozłączono');
+            });
+
+            try {
+                await connection.start();
+                updateConnectionStatus('info', 'Tworzenie sesji...');
+
+                // Utwórz sesję
+                const result = await connection.invoke("CreateGame", quizId);
+
+                if (result.success) {
+                    sessionId = result.sessionId;
+                    updateConnectionStatus('success', 'Sesja aktywna');
+                    console.log("Session created:", sessionId);
+                } else {
+                    updateConnectionStatus('danger', result.errorMessage || 'Błąd tworzenia sesji');
+                }
+            } catch (error) {
+                console.error("Connection error:", error);
+                updateConnectionStatus('danger', 'Błąd połączenia');
+            }
+        }
+
+        function handlePlayerEvent(event) {
+            console.log("Player event:", event);
+
+            switch (event.eventType) {
+                case 'joined':
+                    players.set(event.playerId, {
+                        nickname: event.nickname,
+                        connected: true
+                    });
+                    showToast(`${event.nickname} dołączył do gry`, 'success');
+                    break;
+                case 'left':
+                    players.delete(event.playerId);
+                    showToast(`${event.nickname} opuścił grę`, 'warning');
+                    break;
+                case 'disconnected':
+                    if (players.has(event.playerId)) {
+                        players.get(event.playerId).connected = false;
+                    }
+                    showToast(`${event.nickname} rozłączony`, 'warning');
+                    break;
+                case 'reconnected':
+                    if (players.has(event.playerId)) {
+                        players.get(event.playerId).connected = true;
+                    }
+                    showToast(`${event.nickname} powrócił`, 'info');
+                    break;
+            }
+
+            updatePlayerList();
+            updateStartButton();
+        }
+
+        function handleMessage(message) {
+            showToast(message.message, message.type);
+        }
+
+        function updatePlayerList() {
+            const list = document.getElementById('playerList');
+            const count = document.getElementById('playerCount');
+
+            count.textContent = players.size;
+
+            if (players.size === 0) {
+                list.innerHTML = '<div class="text-white-50">Oczekiwanie na graczy...</div>';
+                return;
+            }
+
+            let html = '';
+            players.forEach((player, id) => {
+                const disconnectedClass = player.connected ? '' : 'disconnected';
+                const initial = player.nickname.charAt(0).toUpperCase();
+                html += `
+                    <div class="player-card ${disconnectedClass}">
+                        <div class="player-avatar">${initial}</div>
+                        <span>${player.nickname}</span>
+                        ${!player.connected ? '<i class="bi bi-wifi-off text-warning ms-2"></i>' : ''}
+                    </div>
+                `;
+            });
+            list.innerHTML = html;
+        }
+
+        function updateStartButton() {
+            const startBtn = document.getElementById('startBtn');
+            const connectedPlayers = Array.from(players.values()).filter(p => p.connected).length;
+            startBtn.disabled = connectedPlayers < 1;
+        }
+
+        function updateConnectionStatus(type, text) {
+            const status = document.getElementById('connectionStatus');
+            status.innerHTML = `<span class="badge bg-${type}"><i class="bi bi-${type === 'success' ? 'check-circle' : type === 'danger' ? 'x-circle' : 'hourglass-split'} me-1"></i> ${text}</span>`;
+        }
+
+        async function startGame() {
+            if (!sessionId) return;
+
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('startBtn').innerHTML = '<i class="bi bi-hourglass-split me-2"></i> Uruchamianie...';
+
+            try {
+                const success = await connection.invoke("StartGame", sessionId);
+                if (success) {
+                    // Przekieruj do widoku gry
+                    window.location.href = `/Game/Play?sessionId=${sessionId}&isHost=true`;
+                } else {
+                    showToast('Nie udało się rozpocząć gry', 'error');
+                    document.getElementById('startBtn').disabled = false;
+                    document.getElementById('startBtn').innerHTML = '<i class="bi bi-play-fill me-2"></i> Rozpocznij grę';
+                }
+            } catch (error) {
+                console.error("Start error:", error);
+                showToast('Błąd podczas uruchamiania gry', 'error');
+            }
+        }
+
+        async function cancelGame() {
+            if (!sessionId) {
+                window.location.href = '/Quizzes';
+                return;
+            }
+
+            if (!confirm('Czy na pewno chcesz anulować grę?')) return;
+
+            try {
+                await connection.invoke("CancelGame", sessionId);
+            } catch (error) {
+                console.error("Cancel error:", error);
+            }
+
+            window.location.href = '/Quizzes';
+        }
+
+        function copyCode() {
+            navigator.clipboard.writeText('@accessCode');
+            showToast('Kod skopiowany!', 'success');
+        }
+
+        function copyLink() {
+            navigator.clipboard.writeText(joinUrl);
+            showToast('Link skopiowany!', 'success');
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `game-toast ${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.animation = 'slideIn 0.3s ease reverse';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // Init
+        initHost();
+
+        // Ostrzeżenie przed opuszczeniem
+        window.addEventListener('beforeunload', (e) => {
+            if (sessionId) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+    </script>
+}

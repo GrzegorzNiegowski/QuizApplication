@@ -1,0 +1,162 @@
+﻿@{
+    ViewData["Title"] = "Wyniki";
+    Layout = "_GameLayout";
+    var sessionId = ViewBag.SessionId;
+    var playerId = ViewBag.PlayerId;
+    var isHost = ViewBag.IsHost;
+    var quizTitle = ViewBag.QuizTitle;
+}
+
+<div class="ranking-container">
+    <h1 class="ranking-title">
+        <i class="bi bi-trophy-fill me-2"></i>
+        Wyniki
+    </h1>
+
+    <h4 class="text-center text-white-50 mb-4">@quizTitle</h4>
+
+    <div id="rankingContent">
+        <div class="text-center">
+            <div class="spinner-border text-light" role="status">
+                <span class="visually-hidden">Ładowanie...</span>
+            </div>
+            <p class="text-white-50 mt-2">Ładowanie wyników...</p>
+        </div>
+    </div>
+
+    <div class="text-center mt-5">
+        @if (isHost)
+        {
+            <a href="/Quizzes" class="btn btn-join">
+                <i class="bi bi-arrow-left me-2"></i> Powrót do quizów
+            </a>
+        }
+        else
+        {
+            <a href="/Game/Join" class="btn btn-join">
+                <i class="bi bi-controller me-2"></i> Zagraj ponownie
+            </a>
+            <a href="/" class="btn btn-cancel ms-2">
+                <i class="bi bi-house me-2"></i> Strona główna
+            </a>
+        }
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const sessionId = '@sessionId';
+        const playerId = '@(playerId ?? "")';
+        const isHost = @(isHost.ToString().ToLower());
+
+        function loadResults() {
+            // Próbuj załadować z localStorage (zapisane przez YourFinalRanking)
+            const savedRanking = localStorage.getItem('finalRanking');
+
+            if (savedRanking) {
+                const ranking = JSON.parse(savedRanking);
+                renderRanking(ranking);
+                localStorage.removeItem('finalRanking');
+            } else {
+                // Jeśli nie ma w localStorage, połącz się przez SignalR
+                connectAndGetResults();
+            }
+        }
+
+        async function connectAndGetResults() {
+            const connection = new signalR.HubConnectionBuilder()
+                .withUrl("/quizHub")
+                .build();
+
+            connection.on("YourFinalRanking", (ranking) => {
+                renderRanking(ranking);
+            });
+
+            connection.on("GameFinished", (ranking) => {
+                renderRanking(ranking);
+            });
+
+            try {
+                await connection.start();
+                // Poczekaj na dane lub pokaż komunikat
+                setTimeout(() => {
+                    const content = document.getElementById('rankingContent');
+                    if (content.querySelector('.spinner-border')) {
+                        content.innerHTML = `
+                            <div class="text-center text-white-50">
+                                <i class="bi bi-info-circle display-4"></i>
+                                <p class="mt-3">Wyniki nie są już dostępne.</p>
+                            </div>
+                        `;
+                    }
+                }, 5000);
+            } catch (error) {
+                console.error("Connection error:", error);
+            }
+        }
+
+        function renderRanking(ranking) {
+            const content = document.getElementById('rankingContent');
+
+            if (!ranking || !ranking.rankings || ranking.rankings.length === 0) {
+                content.innerHTML = `
+                    <div class="text-center text-white-50">
+                        <i class="bi bi-emoji-frown display-4"></i>
+                        <p class="mt-3">Brak wyników do wyświetlenia.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '<ul class="ranking-list">';
+
+            ranking.rankings.forEach((entry, index) => {
+                const rank = index + 1;
+                const topClass = rank <= 3 ? `top-${rank}` : 'other';
+                const currentClass = entry.isCurrentPlayer ? 'current-player' : '';
+                const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : rank;
+
+                html += `
+                    <li class="ranking-item ${topClass} ${currentClass}">
+                        <div class="ranking-position ${topClass}">${medal}</div>
+                        <div class="ranking-info">
+                            <div class="ranking-nickname">
+                                ${entry.nickname}
+                                ${entry.isCurrentPlayer ? '<span class="badge bg-primary ms-2">Ty</span>' : ''}
+                            </div>
+                            <div class="ranking-stats">
+                                ${entry.correctAnswers}/${ranking.totalQuestions} poprawnych •
+                                Śr. czas: ${entry.averageResponseTime.toFixed(2)}s
+                            </div>
+                        </div>
+                        <div class="ranking-score">${entry.totalScore}</div>
+                    </li>
+                `;
+            });
+
+            html += '</ul>';
+
+            // Dodaj statystyki na górze
+            if (ranking.rankings.length > 0) {
+                const winner = ranking.rankings[0];
+                html = `
+                    <div class="text-center mb-4">
+                        <div class="display-1">🏆</div>
+                        <h3 class="text-warning">${winner.nickname}</h3>
+                        <p class="text-white-50">${winner.totalScore} punktów</p>
+                    </div>
+                ` + html;
+            }
+
+            content.innerHTML = html;
+
+            // Animacja wejścia
+            document.querySelectorAll('.ranking-item').forEach((item, index) => {
+                item.style.animation = `fadeIn 0.3s ease ${index * 0.1}s both`;
+            });
+        }
+
+        // Init
+        loadResults();
+    </script>
+}

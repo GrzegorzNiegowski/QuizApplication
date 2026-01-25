@@ -1,9 +1,13 @@
 ﻿@model QuizApplication.DTOs.QuizDtos.QuizDetailsDto
 @{
     ViewData["Title"] = Model.Title;
+    // Sprawdzamy uprawnienia do edycji (Właściciel lub Admin)
+
     bool canEdit = User.Identity?.IsAuthenticated == true &&
         (User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value == Model.OwnerId
          || User.IsInRole("Admin"));
+    bool hasQuestions = Model.Questions != null && Model.Questions.Any();
+
 }
 
 <div class="mb-4">
@@ -23,6 +27,10 @@
                 </a>
                 <a asp-action="Delete" asp-route-id="@Model.Id" class="btn btn-outline-danger">
                     Usuń quiz
+                </a>
+                <a asp-controller="Game" asp-action="Host" asp-route-quizId="@Model.Id"
+                   class="btn btn-success btn-lg">
+                    <i class="bi bi-play-circle-fill me-2"></i> Udostępnij Quiz
                 </a>
             </div>
         }
