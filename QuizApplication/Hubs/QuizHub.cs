@@ -17,18 +17,24 @@ namespace QuizApplication.Hubs
         private readonly IGameSessionService _gameSessionService;
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<QuizHub> _logger;
+        private readonly IHubContext<QuizHub> _hubContext;
 
         // Przechowuje timery dla rozłączonych hostów (do anulowania po timeout)
         private static readonly ConcurrentDictionary<Guid, CancellationTokenSource> _hostDisconnectTimers = new();
 
+        // Przechowuje timery dla pytań (do anulowania gdy wszyscy odpowiedzieli)
+        private static readonly ConcurrentDictionary<Guid, CancellationTokenSource> _questionTimers = new();
+
         public QuizHub(
             IGameSessionService gameSessionService,
             IServiceScopeFactory scopeFactory,
-            ILogger<QuizHub> logger)
+            ILogger<QuizHub> logger,
+            IHubContext<QuizHub> hubContext)
         {
             _gameSessionService = gameSessionService;
             _scopeFactory = scopeFactory;
             _logger = logger;
+            _hubContext = hubContext;
         }
 
         #region Connection Events
@@ -478,6 +484,13 @@ namespace QuizApplication.Hubs
             // Sprawdź czy wszyscy odpowiedzieli
             if (session.AllPlayersAnswered())
             {
+                // Anuluj timer pytania
+                if (_questionTimers.TryRemove(sessionId, out var cts))
+                {
+                    cts.Cancel();
+                    _logger.LogDebug("Timer anulowany - wszyscy odpowiedzieli w sesji {SessionId}", sessionId);
+                }
+
                 await EndCurrentQuestion(sessionId);
             }
 
@@ -546,20 +559,323 @@ namespace QuizApplication.Hubs
             _logger.LogDebug("Wysłano pytanie {QuestionNumber}/{Total} do sesji {SessionId} (multi-choice: {IsMulti})",
                 questionDto.QuestionNumber, questionDto.TotalQuestions, sessionId, isMultipleChoice);
 
+            // Anuluj poprzedni timer jeśli istnieje
+            if (_questionTimers.TryRemove(sessionId, out var oldCts))
+            {
+                oldCts.Cancel();
+            }
+
             // Ustaw timer na zakończenie pytania
             var timeLimitSeconds = question.TimeLimitSeconds;
+            var cts = new CancellationTokenSource();
+            _questionTimers[sessionId] = cts;
+
+            // Przechowaj referencje potrzebne w timerze
+            var hubContext = _hubContext;
+            var gameService = _gameSessionService;
+            var scopeFactory = _scopeFactory;
+            var logger = _logger;
+            var currentQuestionId = questionId;
+
             _ = Task.Run(async () =>
             {
-                await Task.Delay(TimeSpan.FromSeconds(timeLimitSeconds));
-
-                // Sprawdź czy pytanie jeszcze trwa
-                var currentSession = _gameSessionService.GetSession(sessionId);
-                if (currentSession?.Status == GameStatus.InProgress &&
-                    currentSession.CurrentQuestionId == questionId)
+                try
                 {
-                    await EndCurrentQuestion(sessionId);
+                    await Task.Delay(TimeSpan.FromSeconds(timeLimitSeconds), cts.Token);
+
+                    // Sprawdź czy pytanie jeszcze trwa
+                    var currentSession = gameService.GetSession(sessionId);
+                    if (currentSession?.Status == GameStatus.InProgress &&
+                        currentSession.CurrentQuestionId == currentQuestionId)
+                    {
+                        logger.LogInformation("Timer zakończył pytanie {QuestionId} w sesji {SessionId}",
+                            currentQuestionId, sessionId);
+                        await EndQuestionFromTimer(sessionId, hubContext, gameService, scopeFactory, logger);
+                    }
+                }
+                catch (TaskCanceledException)
+                {
+                    // Timer anulowany - wszyscy odpowiedzieli wcześniej
+                    logger.LogDebug("Timer anulowany dla sesji {SessionId}", sessionId);
+                }
+                finally
+                {
+                    _questionTimers.TryRemove(sessionId, out _);
                 }
             });
+        }
+
+        /// <summary>
+        /// Kończy pytanie z kontekstu timera (używa IHubContext)
+        /// </summary>
+        private static async Task EndQuestionFromTimer(
+            Guid sessionId,
+            IHubContext<QuizHub> hubContext,
+            IGameSessionService gameService,
+            IServiceScopeFactory scopeFactory,
+            ILogger logger)
+        {
+            var session = gameService.GetSession(sessionId);
+            if (session == null || !session.CurrentQuestionId.HasValue) return;
+
+            // Sprawdź czy już nie pokazujemy wyników
+            if (session.Status == GameStatus.ShowingResults) return;
+
+            var questionId = session.CurrentQuestionId.Value;
+            await gameService.EndQuestionAsync(sessionId);
+
+            // Pobierz poprawne odpowiedzi
+            using var scope = scopeFactory.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+            var question = await dbContext.Questions
+                .Include(q => q.Answers)
+                .FirstOrDefaultAsync(q => q.Id == questionId);
+
+            if (question == null) return;
+
+            var correctAnswerIds = question.Answers
+                .Where(a => a.IsCorrect)
+                .Select(a => a.Id)
+                .ToHashSet();
+
+            if (!correctAnswerIds.Any()) return;
+
+            // Oblicz punkty dla każdego gracza
+            foreach (var player in session.Players.Values)
+            {
+                var answer = player.GetAnswer(questionId);
+                if (answer == null) continue;
+
+                var selectedIds = answer.SelectedAnswerIds.ToHashSet();
+                answer.IsCorrect = selectedIds.SetEquals(correctAnswerIds);
+
+                if (answer.IsCorrect)
+                {
+                    answer.PointsAwarded = gameService.CalculatePoints(
+                        question.Points,
+                        answer.ResponseTimeSeconds,
+                        question.TimeLimitSeconds
+                    );
+                    player.TotalScore += answer.PointsAwarded;
+                }
+            }
+
+            // Wyślij wyniki rundy
+            var roundResults = new RoundResultsDto
+            {
+                QuestionId = questionId,
+                CorrectAnswerIds = correctAnswerIds.ToList(),
+                NextQuestionInSeconds = GameConstants.ResultsDisplaySeconds
+            };
+
+            await hubContext.Clients.Group(session.GroupName).SendAsync("RoundEnded", roundResults);
+
+            // Wyślij indywidualne wyniki do każdego gracza
+            var ranking = session.GetRanking();
+            for (int i = 0; i < ranking.Count; i++)
+            {
+                var player = ranking[i];
+                var answer = player.GetAnswer(questionId);
+
+                var playerResult = new PlayerRoundResultDto
+                {
+                    IsCorrect = answer?.IsCorrect ?? false,
+                    PointsAwarded = answer?.PointsAwarded ?? 0,
+                    TotalScore = player.TotalScore,
+                    CurrentRank = i + 1,
+                    ResponseTimeSeconds = answer?.ResponseTimeSeconds ?? 0
+                };
+
+                if (!string.IsNullOrEmpty(player.ConnectionId))
+                {
+                    await hubContext.Clients.Client(player.ConnectionId).SendAsync("YourRoundResult", playerResult);
+                }
+            }
+
+            // Wyślij top 5 do wszystkich
+            var topPlayers = new TopPlayersDto
+            {
+                Players = ranking.Take(5).Select((p, i) =>
+                {
+                    var ans = p.GetAnswer(questionId);
+                    return new TopPlayerEntryDto
+                    {
+                        Rank = i + 1,
+                        Nickname = p.Nickname,
+                        TotalScore = p.TotalScore,
+                        PointsThisRound = ans?.PointsAwarded ?? 0
+                    };
+                }).ToList()
+            };
+
+            await hubContext.Clients.Group(session.GroupName).SendAsync("TopPlayers", topPlayers);
+
+            // Czekaj i przejdź do następnego pytania
+            await Task.Delay(TimeSpan.FromSeconds(GameConstants.ResultsDisplaySeconds));
+
+            // Sprawdź czy sesja nadal istnieje i nie została anulowana
+            session = gameService.GetSession(sessionId);
+            if (session == null || session.Status == GameStatus.Cancelled) return;
+
+            session.Status = GameStatus.InProgress;
+
+            if (session.HasNextQuestion)
+            {
+                await SendNextQuestionFromTimer(sessionId, hubContext, gameService, scopeFactory, logger);
+            }
+            else
+            {
+                await EndGameFromTimer(sessionId, hubContext, gameService, logger);
+            }
+        }
+
+        /// <summary>
+        /// Wysyła następne pytanie z kontekstu timera
+        /// </summary>
+        private static async Task SendNextQuestionFromTimer(
+            Guid sessionId,
+            IHubContext<QuizHub> hubContext,
+            IGameSessionService gameService,
+            IServiceScopeFactory scopeFactory,
+            ILogger logger)
+        {
+            var (success, questionId) = await gameService.NextQuestionAsync(sessionId);
+            if (!success || !questionId.HasValue)
+            {
+                await EndGameFromTimer(sessionId, hubContext, gameService, logger);
+                return;
+            }
+
+            var session = gameService.GetSession(sessionId);
+            if (session == null) return;
+
+            using var scope = scopeFactory.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+            var question = await dbContext.Questions
+                .Include(q => q.Answers)
+                .FirstOrDefaultAsync(q => q.Id == questionId.Value);
+
+            if (question == null)
+            {
+                logger.LogError("Pytanie {QuestionId} nie znalezione", questionId);
+                return;
+            }
+
+            var correctAnswersCount = question.Answers.Count(a => a.IsCorrect);
+            var isMultipleChoice = correctAnswersCount > 1;
+
+            var questionDto = new GameQuestionDto
+            {
+                QuestionId = question.Id,
+                QuestionNumber = session.CurrentQuestionIndex + 1,
+                TotalQuestions = session.TotalQuestions,
+                Content = question.Content,
+                ImageUrl = question.ImageUrl,
+                TimeLimitSeconds = question.TimeLimitSeconds,
+                MaxPoints = question.Points,
+                IsMultipleChoice = isMultipleChoice,
+                CorrectAnswersCount = correctAnswersCount,
+                Answers = question.Answers.Select(a => new GameAnswerDto
+                {
+                    AnswerId = a.Id,
+                    Content = a.Content
+                }).ToList()
+            };
+
+            await hubContext.Clients.Group(session.GroupName).SendAsync("QuestionStarted", questionDto);
+
+            logger.LogDebug("Timer wysłał pytanie {QuestionNumber}/{Total} do sesji {SessionId}",
+                questionDto.QuestionNumber, questionDto.TotalQuestions, sessionId);
+
+            // Ustaw nowy timer
+            var cts = new CancellationTokenSource();
+            _questionTimers[sessionId] = cts;
+
+            var timeLimitSeconds = question.TimeLimitSeconds;
+            var currentQuestionId = questionId.Value;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(timeLimitSeconds), cts.Token);
+
+                    var currentSession = gameService.GetSession(sessionId);
+                    if (currentSession?.Status == GameStatus.InProgress &&
+                        currentSession.CurrentQuestionId == currentQuestionId)
+                    {
+                        await EndQuestionFromTimer(sessionId, hubContext, gameService, scopeFactory, logger);
+                    }
+                }
+                catch (TaskCanceledException)
+                {
+                    // Timer anulowany
+                }
+                finally
+                {
+                    _questionTimers.TryRemove(sessionId, out _);
+                }
+            });
+        }
+
+        /// <summary>
+        /// Kończy grę z kontekstu timera
+        /// </summary>
+        private static async Task EndGameFromTimer(
+            Guid sessionId,
+            IHubContext<QuizHub> hubContext,
+            IGameSessionService gameService,
+            ILogger logger)
+        {
+            await gameService.FinishGameAsync(sessionId);
+
+            var session = gameService.GetSession(sessionId);
+            if (session == null) return;
+
+            var rankings = gameService.GetFinalRanking(sessionId);
+
+            var finalRanking = new FinalRankingDto
+            {
+                QuizTitle = session.QuizTitle,
+                TotalQuestions = session.TotalQuestions,
+                Rankings = rankings.Select(r => new FinalRankingEntryDto
+                {
+                    Rank = r.Rank,
+                    Nickname = r.Nickname,
+                    TotalScore = r.TotalScore,
+                    CorrectAnswers = r.CorrectAnswers,
+                    AverageResponseTime = r.AverageResponseTime,
+                    IsCurrentPlayer = false
+                }).ToList()
+            };
+
+            await hubContext.Clients.Group(session.GroupName).SendAsync("GameFinished", finalRanking);
+
+            foreach (var player in session.Players.Values)
+            {
+                if (string.IsNullOrEmpty(player.ConnectionId)) continue;
+
+                var personalRanking = new FinalRankingDto
+                {
+                    QuizTitle = session.QuizTitle,
+                    TotalQuestions = session.TotalQuestions,
+                    Rankings = rankings.Select(r => new FinalRankingEntryDto
+                    {
+                        Rank = r.Rank,
+                        Nickname = r.Nickname,
+                        TotalScore = r.TotalScore,
+                        CorrectAnswers = r.CorrectAnswers,
+                        AverageResponseTime = r.AverageResponseTime,
+                        IsCurrentPlayer = r.PlayerId == player.Id
+                    }).ToList()
+                };
+
+                await hubContext.Clients.Client(player.ConnectionId).SendAsync("YourFinalRanking", personalRanking);
+            }
+
+            logger.LogInformation("Gra zakończona w sesji {SessionId}", sessionId);
         }
 
         /// <summary>
