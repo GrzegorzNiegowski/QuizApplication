@@ -10,7 +10,7 @@
             <i class="bi bi-controller"></i> Dołącz do Quizu
         </h1>
 
-        <form id="joinForm">
+        <form id="joinForm" method="post" asp-action="JoinPost" asp-controller="Game">
             <div class="mb-4">
                 <label class="form-label text-white-50">Kod gry</label>
                 <input type="text"
@@ -46,12 +46,15 @@
                 </div>
             </div>
 
-            <div id="errorMessage" class="mb-4 d-none">
-                <div class="alert alert-danger bg-transparent border border-danger text-danger">
-                    <i class="bi bi-exclamation-triangle me-2"></i>
-                    <span id="errorText"></span>
+            @if (TempData["Error"] != null)
+            {
+                <div class="mb-4">
+                    <div class="alert alert-danger bg-transparent border border-danger text-danger">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        @TempData["Error"]
+                    </div>
                 </div>
-            </div>
+            }
 
             <button type="submit" id="joinBtn" class="btn btn-join w-100" disabled>
                 <i class="bi bi-box-arrow-in-right me-2"></i>
@@ -72,14 +75,10 @@
         const accessCodeInput = document.getElementById('accessCode');
         const nicknameInput = document.getElementById('nickname');
         const joinBtn = document.getElementById('joinBtn');
-        const joinForm = document.getElementById('joinForm');
         const codeValidation = document.getElementById('codeValidation');
         const gameInfo = document.getElementById('gameInfo');
         const gameInfoText = document.getElementById('gameInfoText');
-        const errorMessage = document.getElementById('errorMessage');
-        const errorText = document.getElementById('errorText');
 
-        let connection = null;
         let codeCheckTimeout = null;
         let isCodeValid = false;
 
@@ -118,7 +117,6 @@
                         codeValidation.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> Kod prawidłowy</span>';
                         gameInfoText.textContent = `Quiz: ${result.quizTitle} (${result.playerCount} graczy)`;
                         gameInfo.classList.remove('d-none');
-                        errorMessage.classList.add('d-none');
                     } else {
                         isCodeValid = false;
                         codeValidation.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle"></i> ${result.message}</span>`;
@@ -138,51 +136,6 @@
             const isNicknameValid = nickname.length >= 2 && nickname.length <= 20 && /^[a-zA-Z0-9_żźćńółęąśŻŹĆĄŚĘŁÓŃ]+$/.test(nickname);
             joinBtn.disabled = !isCodeValid || !isNicknameValid;
         }
-
-        // Inicjalizacja SignalR
-        async function initSignalR() {
-            connection = new signalR.HubConnectionBuilder()
-                .withUrl("/quizHub")
-                .withAutomaticReconnect()
-                .build();
-
-            await connection.start();
-            console.log("SignalR Connected");
-        }
-
-        joinForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-
-            if (!connection) {
-                await initSignalR();
-            }
-
-            joinBtn.disabled = true;
-            joinBtn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i> Dołączanie...';
-
-            try {
-                const result = await connection.invoke("JoinGame", {
-                    accessCode: accessCodeInput.value,
-                    nickname: nicknameInput.value.trim()
-                });
-
-                if (result.success) {
-                    // Przekieruj do lobby
-                    window.location.href = `/Game/Lobby?sessionId=${result.sessionId}&playerId=${result.playerId}`;
-                } else {
-                    errorText.textContent = result.errorMessage || 'Nie udało się dołączyć do gry';
-                    errorMessage.classList.remove('d-none');
-                    joinBtn.disabled = false;
-                    joinBtn.innerHTML = '<i class="bi bi-box-arrow-in-right me-2"></i> Dołącz';
-                }
-            } catch (error) {
-                console.error('Join error:', error);
-                errorText.textContent = 'Wystąpił błąd połączenia. Spróbuj ponownie.';
-                errorMessage.classList.remove('d-none');
-                joinBtn.disabled = false;
-                joinBtn.innerHTML = '<i class="bi bi-box-arrow-in-right me-2"></i> Dołącz';
-            }
-        });
 
         // Sprawdź kod jeśli jest już wypełniony
         if (accessCodeInput.value.length === 5) {

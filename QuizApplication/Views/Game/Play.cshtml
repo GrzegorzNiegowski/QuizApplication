@@ -30,7 +30,8 @@
 <div class="question-container" id="questionContainer">
     <div class="waiting-container">
         <i class="bi bi-hourglass-split waiting-icon"></i>
-        <p class="waiting-text">Przygotuj się...</p>
+        <p class="waiting-text">Łączenie z grą...</p>
+        <p class="text-white-50" id="connectionStatusText">Nawiązywanie połączenia...</p>
     </div>
 </div>
 
@@ -63,6 +64,7 @@
         let timeLeft = 0;
         let hasAnswered = false;
         let questionStartTime = null;
+        let selectedAnswers = []; // Dla pytań wielokrotnego wyboru
 
         async function initGame() {
             connection = new signalR.HubConnectionBuilder()
@@ -78,14 +80,69 @@
             connection.on("GameFinished", handleGameFinished);
             connection.on("YourFinalRanking", handleYourFinalRanking);
             connection.on("GameCancelled", handleGameCancelled);
+            connection.on("GameMessage", handleGameMessage);
             connection.on("AnswerCountUpdate", handleAnswerCount);
+
+            connection.onreconnecting(() => {
+                document.getElementById('connectionStatusText').textContent = 'Ponowne łączenie...';
+            });
+
+            connection.onreconnected(async () => {
+                document.getElementById('connectionStatusText').textContent = 'Połączono ponownie';
+                // Ponownie dołącz do sesji
+                await joinGameSession();
+            });
+
+            connection.onclose(() => {
+                document.getElementById('connectionStatusText').textContent = 'Rozłączono';
+                showToast('Utracono połączenie z serwerem', 'error');
+            });
 
             try {
                 await connection.start();
-                console.log("Connected to game");
+                console.log("SignalR connected");
+                document.getElementById('connectionStatusText').textContent = 'Połączono - dołączanie do gry...';
+
+                // Dołącz do sesji gry
+                await joinGameSession();
+
             } catch (error) {
                 console.error("Connection error:", error);
-                showToast('Błąd połączenia', 'error');
+                document.getElementById('connectionStatusText').textContent = 'Błąd połączenia';
+                showToast('Błąd połączenia z serwerem', 'error');
+            }
+        }
+
+        async function joinGameSession() {
+            try {
+                console.log("Wywołuję JoinGameSession:", { sessionId, playerId, isHost });
+
+                const success = await connection.invoke("JoinGameSession", sessionId, playerId || null, isHost);
+
+                console.log("JoinGameSession result:", success);
+
+                if (success) {
+                    console.log("Dołączono do sesji gry");
+                    document.getElementById('connectionStatusText').textContent = 'Oczekiwanie na pytanie...';
+
+                    // Pokaż odpowiedni komunikat
+                    const container = document.getElementById('questionContainer');
+                    container.innerHTML = `
+                        <div class="waiting-container">
+                            <i class="bi bi-hourglass-split waiting-icon"></i>
+                            <p class="waiting-text">Przygotuj się...</p>
+                            <p class="text-white-50">Gra zaraz się rozpocznie</p>
+                        </div>
+                    `;
+                } else {
+                    console.error("JoinGameSession zwróciło false");
+                    document.getElementById('connectionStatusText').textContent = 'Błąd dołączania';
+                    showToast('Nie udało się dołączyć do gry', 'error');
+                }
+            } catch (error) {
+                console.error("JoinGameSession error:", error);
+                document.getElementById('connectionStatusText').textContent = 'Błąd dołączania';
+                showToast('Błąd dołączania do gry: ' + error.message, 'error');
             }
         }
 
@@ -93,6 +150,7 @@
             console.log("Question started:", question);
             currentQuestion = question;
             hasAnswered = false;
+            selectedAnswers = []; // Reset wybranych odpowiedzi
             questionStartTime = Date.now();
 
             document.getElementById('questionNumber').textContent = question.questionNumber;
@@ -114,19 +172,128 @@
                 imageHtml = `<img src="${question.imageUrl}" class="question-image" alt="Obrazek pytania" />`;
             }
 
+            // Sprawdź czy to pytanie wielokrotnego wyboru
+            const isMulti = question.isMultipleChoice;
+            const correctCount = question.correctAnswersCount || 1;
+
+            let hintHtml = '';
+            if (isMulti && !isHost) {
+                hintHtml = `<p class="text-info mb-3"><i class="bi bi-info-circle me-2"></i>Wybierz ${correctCount} odpowiedzi</p>`;
+            }
+
             let answersHtml = question.answers.map((answer, index) => `
-                <button class="answer-btn" data-answer-id="${answer.answerId}" onclick="selectAnswer(${answer.answerId})">
+                <button class="answer-btn" data-answer-id="${answer.answerId}" onclick="${isMulti ? 'toggleAnswer' : 'selectAnswer'}(${answer.answerId})" ${isHost ? 'disabled' : ''}>
                     ${answer.content}
                 </button>
             `).join('');
 
+            let submitBtnHtml = '';
+            if (isMulti && !isHost) {
+                submitBtnHtml = `
+                    <div class="mt-3">
+                        <button id="submitMultiBtn" class="btn btn-primary btn-lg" onclick="submitMultiAnswer()" disabled>
+                            <i class="bi bi-check2-all me-2"></i>Zatwierdź odpowiedzi (0/${correctCount})
+                        </button>
+                    </div>
+                `;
+            }
+
             container.innerHTML = `
                 <h2 class="question-text">${question.content}</h2>
                 ${imageHtml}
+                ${hintHtml}
                 <div class="answers-grid" id="answersGrid">
                     ${answersHtml}
                 </div>
+                ${submitBtnHtml}
+                ${isHost ? '<p class="text-white-50 mt-3"><i class="bi bi-eye"></i> Tryb hosta - obserwujesz grę</p>' : ''}
             `;
+        }
+
+        // Dla pytań jednokrotnego wyboru
+        async function selectAnswer(answerId) {
+            if (hasAnswered || isHost) return;
+
+            hasAnswered = true;
+            const responseTime = (Date.now() - questionStartTime) / 1000;
+
+            // Zaznacz wybraną odpowiedź
+            document.querySelectorAll('.answer-btn').forEach(btn => {
+                btn.disabled = true;
+                if (parseInt(btn.dataset.answerId) === answerId) {
+                    btn.classList.add('selected');
+                }
+            });
+
+            // Wyślij odpowiedź (jako lista z jednym elementem)
+            await sendAnswers([answerId], responseTime);
+        }
+
+        // Dla pytań wielokrotnego wyboru - przełączanie zaznaczenia
+        function toggleAnswer(answerId) {
+            if (hasAnswered || isHost) return;
+
+            const btn = document.querySelector(`[data-answer-id="${answerId}"]`);
+            const index = selectedAnswers.indexOf(answerId);
+
+            if (index > -1) {
+                // Odznacz
+                selectedAnswers.splice(index, 1);
+                btn.classList.remove('selected');
+            } else {
+                // Zaznacz
+                selectedAnswers.push(answerId);
+                btn.classList.add('selected');
+            }
+
+            // Aktualizuj stan przycisku zatwierdzania
+            const submitBtn = document.getElementById('submitMultiBtn');
+            if (submitBtn) {
+                const correctCount = currentQuestion.correctAnswersCount || 1;
+                submitBtn.disabled = selectedAnswers.length !== correctCount;
+                submitBtn.innerHTML = `<i class="bi bi-check2-all me-2"></i>Zatwierdź odpowiedzi (${selectedAnswers.length}/${correctCount})`;
+            }
+        }
+
+        // Zatwierdzenie odpowiedzi wielokrotnego wyboru
+        async function submitMultiAnswer() {
+            if (hasAnswered || isHost || selectedAnswers.length === 0) return;
+
+            hasAnswered = true;
+            const responseTime = (Date.now() - questionStartTime) / 1000;
+
+            // Zablokuj wszystkie przyciski
+            document.querySelectorAll('.answer-btn').forEach(btn => {
+                btn.disabled = true;
+            });
+
+            const submitBtn = document.getElementById('submitMultiBtn');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Wysyłanie...';
+            }
+
+            await sendAnswers(selectedAnswers, responseTime);
+        }
+
+        // Wspólna funkcja wysyłania odpowiedzi
+        async function sendAnswers(answerIds, responseTime) {
+            try {
+                const result = await connection.invoke("SubmitAnswer", sessionId, playerId, {
+                    answerIds: answerIds,
+                    responseTimeSeconds: responseTime
+                });
+
+                if (!result.success) {
+                    showToast(result.errorMessage || 'Błąd wysyłania odpowiedzi', 'error');
+                }
+            } catch (error) {
+                console.error("Submit error:", error);
+                showToast('Błąd połączenia', 'error');
+            }
+
+            // Pokaż stan oczekiwania
+            showWaitingState();
         }
 
         function startTimer(seconds) {
@@ -135,6 +302,12 @@
             const circumference = 2 * Math.PI * 34; // 213.6
 
             updateTimerDisplay();
+
+            // Reset timer circle
+            document.getElementById('timerProgress').style.strokeDashoffset = 0;
+            document.getElementById('timerText').className = 'timer-text';
+
+            if (timerInterval) clearInterval(timerInterval);
 
             timerInterval = setInterval(() => {
                 timeLeft -= 0.1;
@@ -165,42 +338,8 @@
             document.getElementById('timerText').textContent = Math.ceil(timeLeft);
         }
 
-        async function selectAnswer(answerId) {
-            if (hasAnswered || isHost) return;
-
-            hasAnswered = true;
-            const responseTime = (Date.now() - questionStartTime) / 1000;
-
-            // Zaznacz wybraną odpowiedź
-            document.querySelectorAll('.answer-btn').forEach(btn => {
-                btn.disabled = true;
-                if (parseInt(btn.dataset.answerId) === answerId) {
-                    btn.classList.add('selected');
-                }
-            });
-
-            // Wyślij odpowiedź
-            try {
-                const result = await connection.invoke("SubmitAnswer", sessionId, playerId, {
-                    answerId: answerId,
-                    responseTimeSeconds: responseTime
-                });
-
-                if (!result.success) {
-                    showToast(result.errorMessage || 'Błąd wysyłania odpowiedzi', 'error');
-                }
-            } catch (error) {
-                console.error("Submit error:", error);
-                showToast('Błąd połączenia', 'error');
-            }
-
-            // Pokaż stan oczekiwania
-            showWaitingState();
-        }
-
         function showWaitingState() {
             const container = document.getElementById('questionContainer');
-            const existingContent = container.innerHTML;
 
             // Dodaj overlay oczekiwania
             const waitingOverlay = document.createElement('div');
@@ -228,17 +367,24 @@
             console.log("Round ended:", results);
             clearInterval(timerInterval);
 
-            // Pokaż poprawną odpowiedź
+            // Pobierz listę poprawnych odpowiedzi (obsługuje multi-choice)
+            const correctIds = results.correctAnswerIds || [];
+
+            // Pokaż poprawne odpowiedzi
             document.querySelectorAll('.answer-btn').forEach(btn => {
                 btn.disabled = true;
                 const answerId = parseInt(btn.dataset.answerId);
 
-                if (answerId === results.correctAnswerId) {
+                if (correctIds.includes(answerId)) {
                     btn.classList.add('correct');
                 } else if (btn.classList.contains('selected')) {
                     btn.classList.add('incorrect');
                 }
             });
+
+            // Ukryj przycisk zatwierdzania (dla multi-choice)
+            const submitBtn = document.getElementById('submitMultiBtn');
+            if (submitBtn) submitBtn.style.display = 'none';
 
             // Usuń overlay oczekiwania
             const overlay = document.getElementById('waitingOverlay');
@@ -298,7 +444,8 @@
 
         function handleGameFinished(ranking) {
             console.log("Game finished:", ranking);
-            // Przekieruj do strony wyników
+            // Zapisz ranking do localStorage i przekieruj
+            localStorage.setItem('finalRanking', JSON.stringify(ranking));
             window.location.href = `/Game/Results?sessionId=${sessionId}&playerId=${playerId}&isHost=${isHost}`;
         }
 
@@ -312,6 +459,10 @@
             setTimeout(() => {
                 window.location.href = '/';
             }, 2000);
+        }
+
+        function handleGameMessage(message) {
+            showToast(message.message, message.type);
         }
 
         function showToast(message, type = 'info') {

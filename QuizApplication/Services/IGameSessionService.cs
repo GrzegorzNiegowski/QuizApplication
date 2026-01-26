@@ -28,8 +28,9 @@ namespace QuizApplication.Services
 
         // === Zarządzanie graczami ===
 
-        /// <summary>Dodaje gracza do sesji</summary>
-        Task<(bool Success, string? ErrorMessage, Player? Player)> JoinSessionAsync(
+        /// <summary>Dodaje gracza do sesji (lub reconnect jeśli gracz istnieje)</summary>
+        /// <returns>Success, ErrorMessage, Player, IsReconnect</returns>
+        Task<(bool Success, string? ErrorMessage, Player? Player, bool IsReconnect)> JoinSessionAsync(
             string accessCode, string nickname, string connectionId, string? userId = null);
 
         /// <summary>Usuwa gracza z sesji</summary>
@@ -64,9 +65,9 @@ namespace QuizApplication.Services
 
         // === Odpowiedzi ===
 
-        /// <summary>Zapisuje odpowiedź gracza</summary>
+        /// <summary>Zapisuje odpowiedź gracza (obsługuje multi-choice)</summary>
         Task<(bool Success, int PointsAwarded, string? ErrorMessage)> SubmitAnswerAsync(
-            Guid sessionId, Guid playerId, int answerId, double responseTimeSeconds);
+            Guid sessionId, Guid playerId, List<int> answerIds, double responseTimeSeconds);
 
         /// <summary>Pobiera wyniki rundy</summary>
         RoundResults GetRoundResults(Guid sessionId, int questionId);
@@ -103,7 +104,7 @@ namespace QuizApplication.Services
     {
         public Guid PlayerId { get; set; }
         public string Nickname { get; set; } = string.Empty;
-        public int? SelectedAnswerId { get; set; }
+        public List<int> SelectedAnswerIds { get; set; } = new();
         public bool IsCorrect { get; set; }
         public int PointsAwarded { get; set; }
         public double ResponseTimeSeconds { get; set; }

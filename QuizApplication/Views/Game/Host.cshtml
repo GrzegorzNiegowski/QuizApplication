@@ -65,6 +65,7 @@
 @section Scripts {
     <script>
         const quizId = @quizId;
+        const accessCode = '@accessCode';
         let connection = null;
         let sessionId = null;
         const players = new Map();
@@ -82,13 +83,15 @@
             // Event handlers
             connection.on("PlayerEvent", handlePlayerEvent);
             connection.on("GameMessage", handleMessage);
+            connection.on("GameStarted", handleGameStarted);
 
             connection.onreconnecting(() => {
                 updateConnectionStatus('warning', 'Ponowne łączenie...');
             });
 
-            connection.onreconnected(() => {
-                updateConnectionStatus('success', 'Połączono');
+            connection.onreconnected(async () => {
+                updateConnectionStatus('info', 'Ponowne tworzenie sesji...');
+                await createOrRejoinSession();
             });
 
             connection.onclose(() => {
@@ -97,21 +100,49 @@
 
             try {
                 await connection.start();
-                updateConnectionStatus('info', 'Tworzenie sesji...');
+                await createOrRejoinSession();
+            } catch (error) {
+                console.error("Connection error:", error);
+                updateConnectionStatus('danger', 'Błąd połączenia');
+            }
+        }
 
-                // Utwórz sesję
+        async function createOrRejoinSession() {
+            updateConnectionStatus('info', 'Tworzenie sesji...');
+
+            try {
+                // Utwórz lub dołącz do istniejącej sesji
                 const result = await connection.invoke("CreateGame", quizId);
 
                 if (result.success) {
                     sessionId = result.sessionId;
+
+                    // Zapisz do localStorage
+                    localStorage.setItem('hostSessionId', sessionId);
+                    localStorage.setItem('hostQuizId', quizId);
+
                     updateConnectionStatus('success', 'Sesja aktywna');
-                    console.log("Session created:", sessionId);
+                    console.log("Session created/rejoined:", sessionId);
+
+                    // Pobierz listę graczy jeśli sesja już istniała
+                    const lobbyInfo = await connection.invoke("GetLobbyInfo", sessionId);
+                    if (lobbyInfo && lobbyInfo.players) {
+                        players.clear();
+                        lobbyInfo.players.forEach(p => {
+                            players.set(p.playerId, {
+                                nickname: p.nickname,
+                                connected: p.isConnected
+                            });
+                        });
+                        updatePlayerList();
+                        updateStartButton();
+                    }
                 } else {
                     updateConnectionStatus('danger', result.errorMessage || 'Błąd tworzenia sesji');
                 }
             } catch (error) {
-                console.error("Connection error:", error);
-                updateConnectionStatus('danger', 'Błąd połączenia');
+                console.error("Create session error:", error);
+                updateConnectionStatus('danger', 'Błąd tworzenia sesji');
             }
         }
 
@@ -150,6 +181,11 @@
 
         function handleMessage(message) {
             showToast(message.message, message.type);
+        }
+
+        function handleGameStarted() {
+            // Przekieruj do widoku gry
+            window.location.href = `/Game/Play?sessionId=${sessionId}&isHost=true`;
         }
 
         function updatePlayerList() {
@@ -197,17 +233,17 @@
 
             try {
                 const success = await connection.invoke("StartGame", sessionId);
-                if (success) {
-                    // Przekieruj do widoku gry
-                    window.location.href = `/Game/Play?sessionId=${sessionId}&isHost=true`;
-                } else {
+                if (!success) {
                     showToast('Nie udało się rozpocząć gry', 'error');
                     document.getElementById('startBtn').disabled = false;
                     document.getElementById('startBtn').innerHTML = '<i class="bi bi-play-fill me-2"></i> Rozpocznij grę';
                 }
+                // Jeśli sukces, handleGameStarted przekieruje
             } catch (error) {
                 console.error("Start error:", error);
                 showToast('Błąd podczas uruchamiania gry', 'error');
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('startBtn').innerHTML = '<i class="bi bi-play-fill me-2"></i> Rozpocznij grę';
             }
         }
 
@@ -225,6 +261,8 @@
                 console.error("Cancel error:", error);
             }
 
+            localStorage.removeItem('hostSessionId');
+            localStorage.removeItem('hostQuizId');
             window.location.href = '/Quizzes';
         }
 
@@ -255,7 +293,7 @@
 
         // Ostrzeżenie przed opuszczeniem
         window.addEventListener('beforeunload', (e) => {
-            if (sessionId) {
+            if (sessionId && players.size > 0) {
                 e.preventDefault();
                 e.returnValue = '';
             }

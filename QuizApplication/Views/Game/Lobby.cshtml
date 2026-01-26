@@ -5,6 +5,8 @@
     var playerId = ViewBag.PlayerId;
     var quizTitle = ViewBag.QuizTitle;
     var accessCode = ViewBag.AccessCode;
+    var nickname = ViewBag.Nickname;
+    var isNewPlayer = ViewBag.IsNewPlayer ?? false;
 }
 
 <div class="lobby-container">
@@ -22,8 +24,8 @@
 
     <!-- Status połączenia -->
     <div id="connectionStatus" class="mb-3">
-        <span class="badge bg-success">
-            <i class="bi bi-check-circle me-1"></i> Połączono
+        <span class="badge bg-warning">
+            <i class="bi bi-hourglass-split me-1"></i> Łączenie...
         </span>
     </div>
 
@@ -31,10 +33,10 @@
     <div class="mb-4">
         <h4 class="text-white-50">
             <i class="bi bi-people me-2"></i>
-            Gracze (<span id="playerCount">1</span>)
+            Gracze (<span id="playerCount">0</span>)
         </h4>
         <div class="player-list" id="playerList">
-            <!-- Gracze będą dodawani przez JS -->
+            <div class="text-white-50">Ładowanie...</div>
         </div>
     </div>
 
@@ -54,8 +56,12 @@
 
 @section Scripts {
     <script>
-        const sessionId = '@sessionId';
-        const playerId = '@playerId';
+        const accessCode = '@accessCode';
+        const nickname = '@(nickname ?? "")';
+        const isNewPlayer = @(isNewPlayer.ToString().ToLower());
+
+        let sessionId = '@(sessionId ?? Guid.Empty)';
+        let playerId = '@(playerId ?? "")';
         let connection = null;
         const players = new Map();
 
@@ -77,15 +83,7 @@
 
             connection.onreconnected(async () => {
                 updateConnectionStatus('info', 'Ponowne dołączanie...');
-                // Spróbuj ponownie dołączyć
-                try {
-                    const result = await connection.invoke("ReconnectGame", '@accessCode', localStorage.getItem('quizNickname') || '');
-                    if (result.success) {
-                        updateConnectionStatus('success', 'Połączono');
-                    }
-                } catch (error) {
-                    console.error("Reconnect error:", error);
-                }
+                await rejoinGame();
             });
 
             connection.onclose(() => {
@@ -94,8 +92,92 @@
 
             try {
                 await connection.start();
+                console.log("SignalR connected");
 
-                // Pobierz informacje o lobby
+                if (isNewPlayer && nickname) {
+                    // Nowy gracz - dołącz do gry
+                    await joinGame();
+                } else if (playerId) {
+                    // Powracający gracz - reconnect
+                    await rejoinGame();
+                } else {
+                    // Tylko pobierz info o lobby
+                    await loadLobbyInfo();
+                }
+            } catch (error) {
+                console.error("Connection error:", error);
+                updateConnectionStatus('danger', 'Błąd połączenia');
+            }
+        }
+
+        async function joinGame() {
+            updateConnectionStatus('info', 'Dołączanie...');
+
+            try {
+                console.log("Wywołuję JoinGame z:", { accessCode, nickname });
+
+                const result = await connection.invoke("JoinGame", {
+                    accessCode: accessCode,
+                    nickname: nickname
+                });
+
+                console.log("JoinGame result:", result);
+
+                if (result.success) {
+                    sessionId = result.sessionId;
+                    playerId = result.playerId;
+                    updateConnectionStatus('success', 'Połączono');
+
+                    // Zapisz dane do localStorage dla reconnectu
+                    localStorage.setItem('quizSessionId', sessionId);
+                    localStorage.setItem('quizPlayerId', playerId);
+                    localStorage.setItem('quizNickname', nickname);
+                    localStorage.setItem('quizAccessCode', accessCode);
+
+                    console.log("Dołączono do gry:", { sessionId, playerId });
+
+                    // Pobierz listę graczy
+                    await loadLobbyInfo();
+                } else {
+                    updateConnectionStatus('danger', result.errorMessage || 'Nie udało się dołączyć');
+                    showToast(result.errorMessage || 'Nie udało się dołączyć do gry', 'error');
+                }
+            } catch (error) {
+                console.error("Join error:", error);
+                updateConnectionStatus('danger', 'Błąd dołączania');
+                showToast('Błąd połączenia. Spróbuj odświeżyć stronę.', 'error');
+            }
+        }
+
+        async function rejoinGame() {
+            const savedNickname = localStorage.getItem('quizNickname') || nickname;
+
+            if (!savedNickname) {
+                updateConnectionStatus('danger', 'Brak danych do reconnectu');
+                return;
+            }
+
+            try {
+                const result = await connection.invoke("ReconnectGame", accessCode, savedNickname);
+
+                if (result.success) {
+                    sessionId = result.sessionId;
+                    playerId = result.playerId;
+                    updateConnectionStatus('success', 'Połączono');
+                    await loadLobbyInfo();
+                } else {
+                    // Nie udało się reconnect - spróbuj jako nowy gracz
+                    if (savedNickname) {
+                        await joinGame();
+                    }
+                }
+            } catch (error) {
+                console.error("Reconnect error:", error);
+            }
+        }
+
+        async function loadLobbyInfo() {
+            try {
                 const lobbyInfo = await connection.invoke("GetLobbyInfo", sessionId);
                 if (lobbyInfo) {
                     lobbyInfo.players.forEach(p => {
@@ -106,11 +188,8 @@
                     });
                     updatePlayerList();
                 }
-
-                console.log("Connected to lobby");
             } catch (error) {
-                console.error("Connection error:", error);
-                updateConnectionStatus('danger', 'Błąd połączenia');
+                console.error("Load lobby error:", error);
             }
         }
 
@@ -141,6 +220,7 @@
                 case 'reconnected':
                     if (players.has(event.playerId)) {
                         players.get(event.playerId).connected = true;
+                        showToast(`${event.nickname} powrócił`, 'info');
                     }
                     break;
             }
@@ -150,6 +230,11 @@
 
         function handleGameStarted() {
             showToast('Gra się rozpoczyna!', 'success');
+
+            // Wyczyść localStorage
+            localStorage.removeItem('quizSessionId');
+            localStorage.removeItem('quizPlayerId');
+
             setTimeout(() => {
                 window.location.href = `/Game/Play?sessionId=${sessionId}&playerId=${playerId}`;
             }, 500);
@@ -157,6 +242,7 @@
 
         function handleGameCancelled(message) {
             showToast(message.message, 'error');
+            localStorage.clear();
             setTimeout(() => {
                 window.location.href = '/Game/Join';
             }, 2000);
@@ -203,11 +289,14 @@
             if (!confirm('Czy na pewno chcesz opuścić grę?')) return;
 
             try {
-                await connection.invoke("LeaveGame", sessionId, playerId);
+                if (connection && playerId) {
+                    await connection.invoke("LeaveGame", sessionId, playerId);
+                }
             } catch (error) {
                 console.error("Leave error:", error);
             }
 
+            localStorage.clear();
             window.location.href = '/Game/Join';
         }
 

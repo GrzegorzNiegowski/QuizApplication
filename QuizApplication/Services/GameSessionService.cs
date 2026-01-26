@@ -25,16 +25,24 @@ namespace QuizApplication.Services
         public Task<GameSession> CreateSessionAsync(int quizId, string quizTitle, string accessCode,
             string hostConnectionId, string hostUserId, List<int> questionIds)
         {
-            // Sprawdź czy nie ma już aktywnej sesji dla tego kodu
-            if (_accessCodeToSessionId.ContainsKey(accessCode))
+            // Sprawdź czy jest już aktywna sesja dla tego kodu
+            if (_accessCodeToSessionId.TryGetValue(accessCode, out var existingSessionId))
             {
-                var existingSession = GetSessionByAccessCode(accessCode);
-                if (existingSession != null && existingSession.IsInProgress)
+                var existingSession = GetSession(existingSessionId);
+                if (existingSession != null)
                 {
-                    throw new InvalidOperationException("Sesja dla tego quizu już istnieje");
+                    // Jeśli sesja jest w lobby lub w trakcie - zaktualizuj host ConnectionId i zwróć
+                    if (existingSession.Status == GameStatus.Lobby || existingSession.IsInProgress)
+                    {
+                        existingSession.HostConnectionId = hostConnectionId;
+                        _logger.LogInformation("Host reconnected do sesji {SessionId} (kod: {AccessCode})",
+                            existingSession.Id, accessCode);
+                        return Task.FromResult(existingSession);
+                    }
+
+                    // Jeśli sesja zakończona lub anulowana - usuń i utwórz nową
+                    RemoveSession(existingSession.Id);
                 }
-                // Usuń starą nieaktywną sesję
-                RemoveSession(existingSession!.Id);
             }
 
             var session = new GameSession
@@ -50,7 +58,7 @@ namespace QuizApplication.Services
 
             if (_sessions.TryAdd(session.Id, session))
             {
-                _accessCodeToSessionId.TryAdd(accessCode, session.Id);
+                _accessCodeToSessionId[accessCode] = session.Id;
                 _logger.LogInformation("Utworzono sesję {SessionId} dla quizu {QuizId} (kod: {AccessCode})",
                     session.Id, quizId, accessCode);
             }
@@ -94,29 +102,46 @@ namespace QuizApplication.Services
 
         #region Player Management
 
-        public Task<(bool Success, string? ErrorMessage, Player? Player)> JoinSessionAsync(
+        public Task<(bool Success, string? ErrorMessage, Player? Player, bool IsReconnect)> JoinSessionAsync(
             string accessCode, string nickname, string connectionId, string? userId = null)
         {
             var session = GetSessionByAccessCode(accessCode);
 
             if (session == null)
             {
-                return Task.FromResult<(bool, string?, Player?)>((false, GameConstants.Messages.GameNotFound, null));
+                return Task.FromResult<(bool, string?, Player?, bool)>((false, GameConstants.Messages.GameNotFound, null, false));
             }
 
             if (!session.CanJoin)
             {
-                return Task.FromResult<(bool, string?, Player?)>((false, GameConstants.Messages.GameAlreadyStarted, null));
+                return Task.FromResult<(bool, string?, Player?, bool)>((false, GameConstants.Messages.GameAlreadyStarted, null, false));
             }
 
             if (session.Players.Count >= GameConstants.MaxPlayersPerSession)
             {
-                return Task.FromResult<(bool, string?, Player?)>((false, GameConstants.Messages.GameFull, null));
+                return Task.FromResult<(bool, string?, Player?, bool)>((false, GameConstants.Messages.GameFull, null, false));
             }
 
-            if (session.IsNicknameTaken(nickname))
+            // Sprawdź czy gracz o tym nicku już istnieje w sesji
+            var existingPlayer = session.GetPlayerByNickname(nickname);
+            if (existingPlayer != null)
             {
-                return Task.FromResult<(bool, string?, Player?)>((false, GameConstants.Messages.NicknameTaken, null));
+                // Gracz istnieje - sprawdź czy jest rozłączony (czyli wraca po refresh)
+                if (existingPlayer.Status == PlayerStatus.Disconnected)
+                {
+                    // Reconnect - zaktualizuj ConnectionId
+                    existingPlayer.ConnectionId = connectionId;
+                    existingPlayer.Status = PlayerStatus.Connected;
+                    existingPlayer.DisconnectedAt = null;
+
+                    _logger.LogInformation("Gracz {Nickname} wrócił do sesji {SessionId} (auto-reconnect przy join)",
+                        nickname, session.Id);
+
+                    return Task.FromResult<(bool, string?, Player?, bool)>((true, null, existingPlayer, true));
+                }
+
+                // Gracz jest połączony - nick zajęty
+                return Task.FromResult<(bool, string?, Player?, bool)>((false, GameConstants.Messages.NicknameTaken, null, false));
             }
 
             var player = new Player
@@ -129,10 +154,10 @@ namespace QuizApplication.Services
             if (session.TryAddPlayer(player))
             {
                 _logger.LogInformation("Gracz {Nickname} dołączył do sesji {SessionId}", nickname, session.Id);
-                return Task.FromResult<(bool, string?, Player?)>((true, null, player));
+                return Task.FromResult<(bool, string?, Player?, bool)>((true, null, player, false));
             }
 
-            return Task.FromResult<(bool, string?, Player?)>((false, "Nie udało się dołączyć do gry", null));
+            return Task.FromResult<(bool, string?, Player?, bool)>((false, "Nie udało się dołączyć do gry", null, false));
         }
 
         public Task<bool> LeaveSessionAsync(Guid sessionId, Guid playerId)
@@ -223,14 +248,22 @@ namespace QuizApplication.Services
                 return Task.FromResult<(bool, string?)>((false, GameConstants.Messages.GameNotFound));
             }
 
+            // Sprawdź czy to aktualny host
             if (session.HostConnectionId != hostConnectionId)
             {
+                _logger.LogWarning("Próba startu gry przez non-host: {ConnectionId}, oczekiwano: {HostConnectionId}",
+                    hostConnectionId, session.HostConnectionId);
                 return Task.FromResult<(bool, string?)>((false, GameConstants.Messages.NotAuthorized));
             }
 
             if (session.ActivePlayerCount < GameConstants.MinPlayersToStart)
             {
                 return Task.FromResult<(bool, string?)>((false, GameConstants.Messages.NotEnoughPlayers));
+            }
+
+            if (session.Status != GameStatus.Lobby)
+            {
+                return Task.FromResult<(bool, string?)>((false, "Gra już została rozpoczęta"));
             }
 
             session.Status = GameStatus.InProgress;
@@ -288,8 +321,11 @@ namespace QuizApplication.Services
             var session = GetSession(sessionId);
             if (session == null) return Task.FromResult(false);
 
+            // Sprawdź czy to aktualny host (ConnectionId może się zmienić po reconnect)
             if (session.HostConnectionId != hostConnectionId)
             {
+                _logger.LogWarning("Próba anulowania gry przez non-host: {ConnectionId}, oczekiwano: {HostConnectionId}",
+                    hostConnectionId, session.HostConnectionId);
                 return Task.FromResult(false);
             }
 
@@ -304,7 +340,7 @@ namespace QuizApplication.Services
         #region Answers
 
         public Task<(bool Success, int PointsAwarded, string? ErrorMessage)> SubmitAnswerAsync(
-            Guid sessionId, Guid playerId, int answerId, double responseTimeSeconds)
+            Guid sessionId, Guid playerId, List<int> answerIds, double responseTimeSeconds)
         {
             var session = GetSession(sessionId);
             if (session == null || session.Status != GameStatus.InProgress)
@@ -333,15 +369,15 @@ namespace QuizApplication.Services
             var answer = new PlayerAnswer
             {
                 QuestionId = questionId,
-                SelectedAnswerId = answerId,
+                SelectedAnswerIds = answerIds ?? new List<int>(),
                 ResponseTimeSeconds = responseTimeSeconds,
                 AnsweredAt = DateTime.UtcNow
             };
 
             if (player.AddAnswer(answer))
             {
-                _logger.LogDebug("Gracz {Nickname} odpowiedział na pytanie {QuestionId} w {Time}s",
-                    player.Nickname, questionId, responseTimeSeconds);
+                _logger.LogDebug("Gracz {Nickname} odpowiedział na pytanie {QuestionId} w {Time}s (odpowiedzi: {Answers})",
+                    player.Nickname, questionId, responseTimeSeconds, string.Join(",", answerIds ?? new List<int>()));
                 return Task.FromResult<(bool, int, string?)>((true, 0, null)); // Punkty obliczane w GetRoundResults
             }
 
@@ -373,7 +409,7 @@ namespace QuizApplication.Services
                 {
                     PlayerId = player.Id,
                     Nickname = player.Nickname,
-                    SelectedAnswerId = answer?.SelectedAnswerId,
+                    SelectedAnswerIds = answer?.SelectedAnswerIds ?? new List<int>(),
                     IsCorrect = answer?.IsCorrect ?? false,
                     PointsAwarded = answer?.PointsAwarded ?? 0,
                     ResponseTimeSeconds = answer?.ResponseTimeSeconds ?? 0,

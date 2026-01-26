@@ -53,6 +53,47 @@ namespace QuizApplication.Controllers
         }
 
         /// <summary>
+        /// POST: Dołączanie do gry - walidacja i przekierowanie do Lobby
+        /// </summary>
+        [HttpPost]
+        public IActionResult JoinPost(JoinGameDto model)
+        {
+            if (!ModelState.IsValid)
+            {
+                TempData["Error"] = "Nieprawidłowe dane";
+                return View("Join", model);
+            }
+
+            var accessCode = model.AccessCode.ToUpperInvariant();
+            var session = _gameSessionService.GetSessionByAccessCode(accessCode);
+
+            if (session == null)
+            {
+                TempData["Error"] = "Nie znaleziono gry o podanym kodzie";
+                return View("Join", model);
+            }
+
+            if (!session.CanJoin)
+            {
+                TempData["Error"] = "Gra już się rozpoczęła";
+                return View("Join", model);
+            }
+
+            if (session.IsNicknameTaken(model.Nickname))
+            {
+                TempData["Error"] = "Ten nick jest już zajęty w tej grze";
+                return View("Join", model);
+            }
+
+            // Przekieruj do Lobby z kodem i nickiem - dołączenie nastąpi przez SignalR
+            return RedirectToAction("Lobby", new
+            {
+                accessCode = accessCode,
+                nickname = model.Nickname
+            });
+        }
+
+        /// <summary>
         /// Lobby hosta - udostępnianie quizu
         /// </summary>
         [HttpGet]
@@ -95,22 +136,56 @@ namespace QuizApplication.Controllers
         /// Lobby gracza - oczekiwanie na start
         /// </summary>
         [HttpGet]
-        public IActionResult Lobby(Guid sessionId, Guid playerId)
+        public IActionResult Lobby(string? accessCode = null, string? nickname = null, Guid? sessionId = null, Guid? playerId = null)
         {
-            var session = _gameSessionService.GetSession(sessionId);
-
-            if (session == null)
+            // Jeśli mamy accessCode i nickname - to nowy gracz (z formularza Join)
+            if (!string.IsNullOrEmpty(accessCode) && !string.IsNullOrEmpty(nickname))
             {
-                TempData["Error"] = "Sesja nie istnieje";
-                return RedirectToAction("Join");
+                var session = _gameSessionService.GetSessionByAccessCode(accessCode);
+
+                if (session == null)
+                {
+                    TempData["Error"] = "Sesja nie istnieje";
+                    return RedirectToAction("Join");
+                }
+
+                if (!session.CanJoin)
+                {
+                    TempData["Error"] = "Gra już się rozpoczęła";
+                    return RedirectToAction("Join");
+                }
+
+                ViewBag.AccessCode = accessCode;
+                ViewBag.Nickname = nickname;
+                ViewBag.SessionId = session.Id;
+                ViewBag.PlayerId = null; // Będzie ustawione po dołączeniu przez SignalR
+                ViewBag.QuizTitle = session.QuizTitle;
+                ViewBag.IsNewPlayer = true;
+
+                return View();
             }
 
-            ViewBag.SessionId = sessionId;
-            ViewBag.PlayerId = playerId;
-            ViewBag.QuizTitle = session.QuizTitle;
-            ViewBag.AccessCode = session.AccessCode;
+            // Jeśli mamy sessionId i playerId - to reconnect lub powrót
+            if (sessionId.HasValue)
+            {
+                var session = _gameSessionService.GetSession(sessionId.Value);
 
-            return View();
+                if (session == null)
+                {
+                    TempData["Error"] = "Sesja nie istnieje";
+                    return RedirectToAction("Join");
+                }
+
+                ViewBag.AccessCode = session.AccessCode;
+                ViewBag.SessionId = sessionId;
+                ViewBag.PlayerId = playerId;
+                ViewBag.QuizTitle = session.QuizTitle;
+                ViewBag.IsNewPlayer = false;
+
+                return View();
+            }
+
+            return RedirectToAction("Join");
         }
 
         /// <summary>

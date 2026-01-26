@@ -10,7 +10,8 @@ namespace QuizApplication.DTOs.GameDtos
     public class RoundResultsDto
     {
         public int QuestionId { get; set; }
-        public int CorrectAnswerId { get; set; }
+        /// <summary>Lista poprawnych odpowiedzi (obsługuje multi-choice)</summary>
+        public List<int> CorrectAnswerIds { get; set; } = new();
         public int NextQuestionInSeconds { get; set; } = GameConstants.ResultsDisplaySeconds;
     }
 }

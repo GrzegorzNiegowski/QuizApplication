@@ -5,7 +5,8 @@
     /// </summary>
     public class SubmitAnswerDto
     {
-        public int AnswerId { get; set; }
+        /// <summary>Lista wybranych odpowiedzi (dla kompatybilności wstecznej można przekazać jedną)</summary>
+        public List<int> AnswerIds { get; set; } = new();
         public double ResponseTimeSeconds { get; set; }
     }
 

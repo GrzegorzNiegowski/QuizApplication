@@ -5,6 +5,7 @@ using QuizApplication.Models.Game;
 using QuizApplication.Services;
 using QuizApplication.Utilities;
 using Microsoft.EntityFrameworkCore;
+using System.Collections.Concurrent;
 
 namespace QuizApplication.Hubs
 {
@@ -16,6 +17,9 @@ namespace QuizApplication.Hubs
         private readonly IGameSessionService _gameSessionService;
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<QuizHub> _logger;
+
+        // Przechowuje timery dla rozłączonych hostów (do anulowania po timeout)
+        private static readonly ConcurrentDictionary<Guid, CancellationTokenSource> _hostDisconnectTimers = new();
 
         public QuizHub(
             IGameSessionService gameSessionService,
@@ -32,6 +36,8 @@ namespace QuizApplication.Hubs
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             var connectionId = Context.ConnectionId;
+
+            // Sprawdź czy to gracz
             var (session, player) = _gameSessionService.FindPlayerByConnectionId(connectionId);
 
             if (session != null && player != null)
@@ -55,18 +61,50 @@ namespace QuizApplication.Hubs
             var hostedSession = _gameSessionService.GetAllActiveSessions()
                 .FirstOrDefault(s => s.HostConnectionId == connectionId);
 
-            if (hostedSession != null && hostedSession.Status != GameStatus.Finished)
+            if (hostedSession != null && hostedSession.Status != GameStatus.Finished && hostedSession.Status != GameStatus.Cancelled)
             {
-                // Host się rozłączył - anuluj grę
-                await _gameSessionService.CancelGameAsync(hostedSession.Id, connectionId);
+                _logger.LogInformation("Host rozłączony z sesji {SessionId} - uruchamiam timeout", hostedSession.Id);
 
-                await Clients.Group(hostedSession.GroupName).SendAsync("GameCancelled", new GameMessageDto
+                // Ustaw timeout zamiast natychmiastowego anulowania
+                var cts = new CancellationTokenSource();
+                _hostDisconnectTimers[hostedSession.Id] = cts;
+
+                // Powiadom graczy że host się rozłączył (ale gra jeszcze nie anulowana)
+                await Clients.Group(hostedSession.GroupName).SendAsync("GameMessage", new GameMessageDto
                 {
-                    Type = "error",
-                    Message = GameConstants.Messages.HostLeft
+                    Type = "warning",
+                    Message = "Host rozłączony - oczekiwanie na ponowne połączenie..."
                 });
 
-                _logger.LogInformation("Host rozłączony - anulowano sesję {SessionId}", hostedSession.Id);
+                // Uruchom timeout w tle
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(GameConstants.PlayerReconnectTimeoutSeconds), cts.Token);
+
+                        // Timeout - anuluj grę
+                        if (!cts.Token.IsCancellationRequested)
+                        {
+                            _logger.LogInformation("Timeout hosta - anulowanie sesji {SessionId}", hostedSession.Id);
+                            hostedSession.Status = GameStatus.Cancelled;
+
+                            await Clients.Group(hostedSession.GroupName).SendAsync("GameCancelled", new GameMessageDto
+                            {
+                                Type = "error",
+                                Message = GameConstants.Messages.HostLeft
+                            });
+                        }
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        // Host się połączył - timeout anulowany
+                    }
+                    finally
+                    {
+                        _hostDisconnectTimers.TryRemove(hostedSession.Id, out _);
+                    }
+                });
             }
 
             await base.OnDisconnectedAsync(exception);
@@ -146,7 +184,7 @@ namespace QuizApplication.Hubs
         }
 
         /// <summary>
-        /// Host rozpoczyna grę
+        /// Host rozpoczyna grę (zmienia status, ale NIE wysyła jeszcze pytań)
         /// </summary>
         public async Task<bool> StartGame(Guid sessionId)
         {
@@ -165,11 +203,96 @@ namespace QuizApplication.Hubs
             var session = _gameSessionService.GetSession(sessionId);
             if (session == null) return false;
 
-            // Powiadom wszystkich o starcie
+            // Powiadom wszystkich o starcie - wszyscy zostaną przekierowani do Play
             await Clients.Group(session.GroupName).SendAsync("GameStarted");
 
-            // Rozpocznij pierwsze pytanie
-            await SendNextQuestion(sessionId);
+            _logger.LogInformation("Gra wystartowana w sesji {SessionId} - czekam na połączenie hosta na Play", sessionId);
+
+            return true;
+        }
+
+        /// <summary>
+        /// Host/Gracz dołącza do sesji gry na stronie Play (po przekierowaniu)
+        /// </summary>
+        public async Task<bool> JoinGameSession(string sessionIdStr, string? playerIdStr, bool isHost)
+        {
+            // Parsuj sessionId
+            if (!Guid.TryParse(sessionIdStr, out var sessionId))
+            {
+                _logger.LogWarning("JoinGameSession: Nieprawidłowy sessionId: {SessionId}", sessionIdStr);
+                return false;
+            }
+
+            var session = _gameSessionService.GetSession(sessionId);
+            if (session == null)
+            {
+                _logger.LogWarning("JoinGameSession: Sesja {SessionId} nie istnieje", sessionId);
+                return false;
+            }
+
+            // Dodaj do grupy SignalR
+            await Groups.AddToGroupAsync(Context.ConnectionId, session.GroupName);
+            _logger.LogInformation("JoinGameSession: Dodano do grupy {GroupName}, isHost={IsHost}, ConnectionId={ConnectionId}",
+                session.GroupName, isHost, Context.ConnectionId);
+
+            if (isHost)
+            {
+                // Anuluj timeout rozłączenia hosta jeśli istnieje
+                if (_hostDisconnectTimers.TryRemove(sessionId, out var cts))
+                {
+                    cts.Cancel();
+                    _logger.LogInformation("Host reconnected - timeout anulowany dla sesji {SessionId}", sessionId);
+                }
+
+                // Aktualizuj ConnectionId hosta
+                session.HostConnectionId = Context.ConnectionId;
+                _logger.LogInformation("Host połączony na Play: {SessionId}, ConnectionId: {ConnectionId}",
+                    sessionId, Context.ConnectionId);
+
+                // Jeśli gra jest InProgress ale nie ma jeszcze pytania - rozpocznij
+                if (session.Status == GameStatus.InProgress && session.CurrentQuestionIndex == -1)
+                {
+                    _logger.LogInformation("Host gotowy - wysyłam pierwsze pytanie dla sesji {SessionId}", sessionId);
+                    await SendNextQuestion(sessionId);
+                }
+                else if (session.Status == GameStatus.InProgress && session.CurrentQuestionIndex >= 0)
+                {
+                    // Gra w trakcie - wyślij aktualne pytanie do hosta
+                    _logger.LogInformation("Host reconnect w trakcie gry - pytanie {Index}", session.CurrentQuestionIndex);
+                }
+            }
+            else
+            {
+                // Gracz - parsuj playerId
+                Guid? playerId = null;
+                if (!string.IsNullOrEmpty(playerIdStr) && Guid.TryParse(playerIdStr, out var parsedPlayerId))
+                {
+                    playerId = parsedPlayerId;
+                }
+
+                if (playerId.HasValue)
+                {
+                    var player = session.Players.Values.FirstOrDefault(p => p.Id == playerId.Value);
+                    if (player != null)
+                    {
+                        player.ConnectionId = Context.ConnectionId;
+                        player.Status = PlayerStatus.Connected;
+                        player.DisconnectedAt = null;
+
+                        _logger.LogInformation("Gracz {Nickname} połączony na Play: {SessionId}",
+                            player.Nickname, sessionId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("JoinGameSession: Nie znaleziono gracza {PlayerId} w sesji {SessionId}",
+                            playerId, sessionId);
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("JoinGameSession: Brak playerId dla gracza");
+                }
+            }
 
             return true;
         }
@@ -204,7 +327,7 @@ namespace QuizApplication.Hubs
             var accessCode = dto.AccessCode.ToUpperInvariant();
             var userId = Context.UserIdentifier;
 
-            var (success, errorMessage, player) = await _gameSessionService.JoinSessionAsync(
+            var (success, errorMessage, player, isReconnect) = await _gameSessionService.JoinSessionAsync(
                 accessCode,
                 dto.Nickname,
                 Context.ConnectionId,
@@ -233,14 +356,17 @@ namespace QuizApplication.Hubs
             // Dodaj gracza do grupy SignalR
             await Groups.AddToGroupAsync(Context.ConnectionId, session.GroupName);
 
-            // Powiadom pozostałych o nowym graczu
+            // Powiadom pozostałych - różne zdarzenie dla join vs reconnect
             await Clients.Group(session.GroupName).SendAsync("PlayerEvent", new PlayerEventDto
             {
-                EventType = "joined",
+                EventType = isReconnect ? "reconnected" : "joined",
                 PlayerId = player.Id,
                 Nickname = player.Nickname,
                 PlayerCount = session.ActivePlayerCount
             });
+
+            _logger.LogInformation("Gracz {Nickname} {Action} do sesji {SessionId}",
+                player.Nickname, isReconnect ? "powrócił" : "dołączył", session.Id);
 
             return new JoinGameResultDto
             {
@@ -316,14 +442,14 @@ namespace QuizApplication.Hubs
         }
 
         /// <summary>
-        /// Gracz wysyła odpowiedź
+        /// Gracz wysyła odpowiedź (obsługuje single i multi-choice)
         /// </summary>
         public async Task<AnswerConfirmationDto> SubmitAnswer(Guid sessionId, Guid playerId, SubmitAnswerDto dto)
         {
             var (success, points, errorMessage) = await _gameSessionService.SubmitAnswerAsync(
                 sessionId,
                 playerId,
-                dto.AnswerId,
+                dto.AnswerIds ?? new List<int>(),
                 dto.ResponseTimeSeconds
             );
 
@@ -392,6 +518,10 @@ namespace QuizApplication.Hubs
                 return;
             }
 
+            // Sprawdź ile poprawnych odpowiedzi ma pytanie
+            var correctAnswersCount = question.Answers.Count(a => a.IsCorrect);
+            var isMultipleChoice = correctAnswersCount > 1;
+
             var questionDto = new GameQuestionDto
             {
                 QuestionId = question.Id,
@@ -401,6 +531,8 @@ namespace QuizApplication.Hubs
                 ImageUrl = question.ImageUrl,
                 TimeLimitSeconds = question.TimeLimitSeconds,
                 MaxPoints = question.Points,
+                IsMultipleChoice = isMultipleChoice,
+                CorrectAnswersCount = correctAnswersCount,
                 Answers = question.Answers.Select(a => new GameAnswerDto
                 {
                     AnswerId = a.Id,
@@ -411,13 +543,14 @@ namespace QuizApplication.Hubs
             // Wyślij pytanie do wszystkich
             await Clients.Group(session.GroupName).SendAsync("QuestionStarted", questionDto);
 
-            _logger.LogDebug("Wysłano pytanie {QuestionNumber}/{Total} do sesji {SessionId}",
-                questionDto.QuestionNumber, questionDto.TotalQuestions, sessionId);
+            _logger.LogDebug("Wysłano pytanie {QuestionNumber}/{Total} do sesji {SessionId} (multi-choice: {IsMulti})",
+                questionDto.QuestionNumber, questionDto.TotalQuestions, sessionId, isMultipleChoice);
 
             // Ustaw timer na zakończenie pytania
+            var timeLimitSeconds = question.TimeLimitSeconds;
             _ = Task.Run(async () =>
             {
-                await Task.Delay(TimeSpan.FromSeconds(question.TimeLimitSeconds));
+                await Task.Delay(TimeSpan.FromSeconds(timeLimitSeconds));
 
                 // Sprawdź czy pytanie jeszcze trwa
                 var currentSession = _gameSessionService.GetSession(sessionId);
@@ -437,10 +570,13 @@ namespace QuizApplication.Hubs
             var session = _gameSessionService.GetSession(sessionId);
             if (session == null || !session.CurrentQuestionId.HasValue) return;
 
+            // Sprawdź czy już nie pokazujemy wyników (unikaj podwójnego wywołania)
+            if (session.Status == GameStatus.ShowingResults) return;
+
             var questionId = session.CurrentQuestionId.Value;
             await _gameSessionService.EndQuestionAsync(sessionId);
 
-            // Pobierz poprawną odpowiedź
+            // Pobierz poprawne odpowiedzi
             using var scope = _scopeFactory.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
@@ -450,8 +586,13 @@ namespace QuizApplication.Hubs
 
             if (question == null) return;
 
-            var correctAnswer = question.Answers.FirstOrDefault(a => a.IsCorrect);
-            if (correctAnswer == null) return;
+            // Pobierz wszystkie poprawne odpowiedzi
+            var correctAnswerIds = question.Answers
+                .Where(a => a.IsCorrect)
+                .Select(a => a.Id)
+                .ToHashSet();
+
+            if (!correctAnswerIds.Any()) return;
 
             // Oblicz punkty dla każdego gracza
             foreach (var player in session.Players.Values)
@@ -459,7 +600,10 @@ namespace QuizApplication.Hubs
                 var answer = player.GetAnswer(questionId);
                 if (answer == null) continue;
 
-                answer.IsCorrect = answer.SelectedAnswerId == correctAnswer.Id;
+                // Sprawdź poprawność odpowiedzi
+                // Dla multi-choice: gracz musi wybrać DOKŁADNIE te same odpowiedzi co poprawne
+                var selectedIds = answer.SelectedAnswerIds.ToHashSet();
+                answer.IsCorrect = selectedIds.SetEquals(correctAnswerIds);
 
                 if (answer.IsCorrect)
                 {
@@ -476,7 +620,7 @@ namespace QuizApplication.Hubs
             var roundResults = new RoundResultsDto
             {
                 QuestionId = questionId,
-                CorrectAnswerId = correctAnswer.Id,
+                CorrectAnswerIds = correctAnswerIds.ToList(),
                 NextQuestionInSeconds = GameConstants.ResultsDisplaySeconds
             };
 
@@ -498,7 +642,10 @@ namespace QuizApplication.Hubs
                     ResponseTimeSeconds = answer?.ResponseTimeSeconds ?? 0
                 };
 
-                await Clients.Client(player.ConnectionId).SendAsync("YourRoundResult", playerResult);
+                if (!string.IsNullOrEmpty(player.ConnectionId))
+                {
+                    await Clients.Client(player.ConnectionId).SendAsync("YourRoundResult", playerResult);
+                }
             }
 
             // Wyślij top 5 do wszystkich
@@ -521,6 +668,10 @@ namespace QuizApplication.Hubs
 
             // Czekaj i przejdź do następnego pytania
             await Task.Delay(TimeSpan.FromSeconds(GameConstants.ResultsDisplaySeconds));
+
+            // Sprawdź czy sesja nadal istnieje i nie została anulowana
+            session = _gameSessionService.GetSession(sessionId);
+            if (session == null || session.Status == GameStatus.Cancelled) return;
 
             session.Status = GameStatus.InProgress;
 
@@ -567,6 +718,8 @@ namespace QuizApplication.Hubs
             // Wyślij indywidualne rankingi z oznaczeniem "to ty"
             foreach (var player in session.Players.Values)
             {
+                if (string.IsNullOrEmpty(player.ConnectionId)) continue;
+
                 var personalRanking = new FinalRankingDto
                 {
                     QuizTitle = session.QuizTitle,
